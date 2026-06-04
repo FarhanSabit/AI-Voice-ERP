@@ -89,7 +89,7 @@ export class PartiesService {
     private readonly prisma: PrismaService,
     @InjectPinoLogger(PartiesService.name)
     private readonly logger: PinoLogger,
-  ) { }
+  ) {}
 
   // ─── LIST ──────────────────────────────────────────────────────────────────
   async findAll(businessId: string, query: QueryPartyDto) {
@@ -131,20 +131,16 @@ export class PartiesService {
     // Summary statistics (scoped to current filter, not just page)
     const summary = {
       total,
-      customers: transformed.filter(
-        (p) => p.type === 'customer' || p.type === 'both',
-      ).length,
-      suppliers: transformed.filter(
-        (p) => p.type === 'supplier' || p.type === 'both',
-      ).length,
+      customers: transformed.filter((p) => p.type === 'customer').length,
+      suppliers: transformed.filter((p) => p.type === 'supplier').length,
       totalReceivable: transformed
-        .filter((p) => p.type === 'customer' || p.type === 'both')
+        .filter((p) => p.type === 'customer')
         .reduce(
           (sum, p) => sum + (p.currentBalance > 0 ? p.currentBalance : 0),
           0,
         ),
       totalPayable: transformed
-        .filter((p) => p.type === 'supplier' || p.type === 'both')
+        .filter((p) => p.type === 'supplier')
         .reduce(
           (sum, p) =>
             sum + (p.currentBalance < 0 ? Math.abs(p.currentBalance) : 0),

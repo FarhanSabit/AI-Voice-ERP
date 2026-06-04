@@ -59,7 +59,7 @@ export class PartiesController {
 
   // POST /parties
   @Post()
-  @ApiOperation({ summary: 'Create a new party (customer, supplier, or both)' })
+  @ApiOperation({ summary: 'Create a new party (customer or supplier)' })
   @ApiResponse({ status: 201, description: 'Party created successfully' })
   @ApiResponse({
     status: 400,

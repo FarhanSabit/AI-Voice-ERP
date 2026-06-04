@@ -319,7 +319,11 @@ export class PaymentsService {
   // 10.2  SUPPLIER PAYMENTS (shorthand: type = paid)
   // ════════════════════════════════════════════════════════════════════════════
 
-  async findSupplierPayments(businessId: string, branchId: string, query: QueryPaymentDto) {
+  async findSupplierPayments(
+    businessId: string,
+    branchId: string,
+    query: QueryPaymentDto,
+  ) {
     return this.findAllPayments(businessId, branchId, {
       ...query,
       type: PaymentType.PAID,
@@ -372,7 +376,10 @@ export class PaymentsService {
     );
     // Last installment absorbs rounding difference
     const lastAmount = parseFloat(
-      (dto.totalAmount - installmentAmount * (dto.totalInstallments - 1)).toFixed(2),
+      (
+        dto.totalAmount -
+        installmentAmount * (dto.totalInstallments - 1)
+      ).toFixed(2),
     );
 
     // Build installment due dates
@@ -380,7 +387,8 @@ export class PaymentsService {
       { length: dto.totalInstallments },
       (_, i) => ({
         installmentNo: i + 1,
-        amount: i === dto.totalInstallments - 1 ? lastAmount : installmentAmount,
+        amount:
+          i === dto.totalInstallments - 1 ? lastAmount : installmentAmount,
         dueDate: addDays(startDate, i * freqDays),
         status: 'pending',
       }),
@@ -426,8 +434,7 @@ export class PaymentsService {
       where: { id: installmentId, paymentPlanId: planId, deletedAt: null },
       include: { paymentPlan: true },
     });
-    if (!installment)
-      throw new NotFoundException('Installment not found.');
+    if (!installment) throw new NotFoundException('Installment not found.');
     if (installment.status === 'paid')
       throw new BadRequestException('Installment already paid.');
 
@@ -451,13 +458,16 @@ export class PaymentsService {
 
       // Update plan totals
       const newPlanPaid = plan.paidAmount + dto.paidAmount;
-      const newPlanRemaining = Math.max(0, plan.remainingAmount - dto.paidAmount);
+      const newPlanRemaining = Math.max(
+        0,
+        plan.remainingAmount - dto.paidAmount,
+      );
       const planStatus =
         newPlanRemaining === 0
           ? 'completed'
           : newPlanPaid > 0
-          ? 'active'
-          : 'active';
+            ? 'active'
+            : 'active';
 
       await tx.paymentPlan.update({
         where: { id: planId },
@@ -552,7 +562,7 @@ export class PaymentsService {
     const where: Prisma.PartyWhereInput = {
       businessId,
       deletedAt: null,
-      type: { in: ['customer', 'both'] },
+      type: 'customer',
       currentBalance: { gt: 0 },
     };
 
@@ -641,10 +651,7 @@ export class PaymentsService {
         limit,
         total,
         totalPages: Math.ceil(total / limit),
-        totalOutstanding: finalList.reduce(
-          (s, p) => s + p.totalOutstanding,
-          0,
-        ),
+        totalOutstanding: finalList.reduce((s, p) => s + p.totalOutstanding, 0),
       },
     };
   }
@@ -656,7 +663,7 @@ export class PaymentsService {
       where: {
         businessId,
         deletedAt: null,
-        type: { in: ['customer', 'both'] },
+        type: 'customer',
         currentBalance: { gt: 0 },
       },
       select: {
@@ -700,10 +707,7 @@ export class PaymentsService {
         buckets,
         summary: {
           total: customers.length,
-          totalOutstanding: customers.reduce(
-            (s, c) => s + c.currentBalance,
-            0,
-          ),
+          totalOutstanding: customers.reduce((s, c) => s + c.currentBalance, 0),
           bucket_0_30: buckets['0-30'].length,
           bucket_31_60: buckets['31-60'].length,
           bucket_61_90: buckets['61-90'].length,
@@ -993,7 +997,7 @@ export class PaymentsService {
         where: {
           businessId,
           deletedAt: null,
-          type: { in: ['customer', 'both'] },
+          type: 'customer',
           currentBalance: { gt: 0 },
         },
         _sum: { currentBalance: true },
@@ -1023,14 +1027,12 @@ export class PaymentsService {
           paid: todayPaid._sum.amount ?? 0,
           receivedCount: todayReceived._count,
           paidCount: todayPaid._count,
-          net:
-            (todayReceived._sum.amount ?? 0) - (todayPaid._sum.amount ?? 0),
+          net: (todayReceived._sum.amount ?? 0) - (todayPaid._sum.amount ?? 0),
         },
         thisMonth: {
           received: monthReceived._sum.amount ?? 0,
           paid: monthPaid._sum.amount ?? 0,
-          net:
-            (monthReceived._sum.amount ?? 0) - (monthPaid._sum.amount ?? 0),
+          net: (monthReceived._sum.amount ?? 0) - (monthPaid._sum.amount ?? 0),
         },
         outstanding: {
           totalAmount: totalOutstanding._sum.currentBalance ?? 0,

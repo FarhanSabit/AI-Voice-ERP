@@ -13,7 +13,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export enum PartyType {
   CUSTOMER = 'customer',
   SUPPLIER = 'supplier',
-  BOTH = 'both',
 }
 
 export enum CustomerTier {
