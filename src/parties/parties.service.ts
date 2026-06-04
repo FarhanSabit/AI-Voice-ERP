@@ -13,15 +13,20 @@ import { QueryPartyDto } from './dto/query-party.dto';
 
 // ─── Prisma include shapes ────────────────────────────────────────────────────
 
-const listPartyInclude = {
+const listPartySelect = {
+  id: true,
+  name: true,
+  phone: true,
+  type: true,
+  currentBalance: true,
+  isActive: true,
+  createdAt: true,
   category: { select: { id: true, name: true, nameBn: true } },
-  branch: { select: { id: true, name: true, nameBn: true } },
-  _count: { select: { sales: true, purchases: true, payments: true } },
-} satisfies Prisma.PartyInclude;
+} satisfies Prisma.PartySelect;
 
 const singlePartyInclude = {
   category: { select: { id: true, name: true, nameBn: true } },
-  branch: { select: { id: true, name: true, nameBn: true } },
+  // branch: { select: { id: true, name: true, nameBn: true } },
   sales: {
     select: {
       id: true,
@@ -62,22 +67,11 @@ const singlePartyInclude = {
   },
 } satisfies Prisma.PartyInclude;
 
-type ListParty = Prisma.PartyGetPayload<{ include: typeof listPartyInclude }>;
 type SingleParty = Prisma.PartyGetPayload<{
   include: typeof singlePartyInclude;
 }>;
 
 // ─── Response transformers ────────────────────────────────────────────────────
-
-function transformListParty(party: ListParty) {
-  const { _count, ...rest } = party;
-  return {
-    ...rest,
-    salesCount: _count.sales,
-    purchasesCount: _count.purchases,
-    paymentsCount: _count.payments,
-  };
-}
 
 function transformSingleParty(party: SingleParty) {
   return { ...party };
@@ -118,7 +112,7 @@ export class PartiesService {
     const [parties, total] = await Promise.all([
       this.prisma.party.findMany({
         where,
-        include: listPartyInclude,
+        select: listPartySelect,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
@@ -126,20 +120,18 @@ export class PartiesService {
       this.prisma.party.count({ where }),
     ]);
 
-    const transformed = parties.map(transformListParty);
-
     // Summary statistics (scoped to current filter, not just page)
     const summary = {
       total,
-      customers: transformed.filter((p) => p.type === 'customer').length,
-      suppliers: transformed.filter((p) => p.type === 'supplier').length,
-      totalReceivable: transformed
+      customers: parties.filter((p) => p.type === 'customer').length,
+      suppliers: parties.filter((p) => p.type === 'supplier').length,
+      totalReceivable: parties
         .filter((p) => p.type === 'customer')
         .reduce(
           (sum, p) => sum + (p.currentBalance > 0 ? p.currentBalance : 0),
           0,
         ),
-      totalPayable: transformed
+      totalPayable: parties
         .filter((p) => p.type === 'supplier')
         .reduce(
           (sum, p) =>
@@ -150,7 +142,7 @@ export class PartiesService {
 
     return {
       success: true,
-      data: transformed,
+      data: parties,
       summary,
       meta: {
         page,
@@ -271,7 +263,7 @@ export class PartiesService {
           openingBalance,
           currentBalance: openingBalance,
           creditLimit: dto.creditLimit ?? null,
-          paymentTerms: dto.paymentTerms ?? null,
+          // paymentTerms: dto.paymentTerms ?? null,
           notes: dto.notes?.trim() ?? null,
           isActive: true,
         },

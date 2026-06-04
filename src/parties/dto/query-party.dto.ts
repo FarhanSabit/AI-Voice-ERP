@@ -52,12 +52,4 @@ export class QueryPartyDto {
   @IsOptional()
   @IsNumberString()
   limit?: string = '50';
-
-  @ApiPropertyOptional({
-    description:
-      'Cursor for pagination (ID of the last item of the previous page)',
-  })
-  @IsOptional()
-  @IsString()
-  cursor?: string;
 }
