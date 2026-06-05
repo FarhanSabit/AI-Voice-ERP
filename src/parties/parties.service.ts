@@ -298,7 +298,6 @@ export class PartiesService {
           openingBalance,
           currentBalance: openingBalance,
           creditLimit: dto.creditLimit ?? null,
-          // paymentTerms: dto.paymentTerms ?? null,
           notes: dto.notes?.trim() ?? null,
           isActive: true,
         },
@@ -426,9 +425,7 @@ export class PartiesService {
         ...(dto.creditLimit !== undefined && {
           creditLimit: dto.creditLimit ?? null,
         }),
-        ...(dto.paymentTerms !== undefined && {
-          paymentTerms: dto.paymentTerms ?? null,
-        }),
+
         ...(dto.notes !== undefined && { notes: dto.notes?.trim() ?? null }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
       },

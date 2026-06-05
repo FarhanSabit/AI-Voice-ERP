@@ -86,13 +86,6 @@ export class CreatePartyDto {
   @Min(0)
   creditLimit?: number;
 
-  // @ApiPropertyOptional({ example: 30, description: 'Payment terms in days' })
-  // @IsOptional()
-  // @Type(() => Number)
-  // @IsNumber()
-  // @Min(0)
-  // paymentTerms?: number;
-
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

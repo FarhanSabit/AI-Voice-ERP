@@ -256,7 +256,6 @@ model Party {
   openingBalance      Float                @default(0)
   currentBalance      Float                @default(0)
   creditLimit         Float?
-  paymentTerms        Int?
   notes               String?
   isActive            Boolean              @default(true)
   riskLevel           String?

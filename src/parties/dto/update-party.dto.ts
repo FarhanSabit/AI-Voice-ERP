@@ -66,13 +66,6 @@ export class UpdatePartyDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  paymentTerms?: number;
-
-  @ApiPropertyOptional()
-  @IsOptional()
   @IsString()
   notes?: string;
 

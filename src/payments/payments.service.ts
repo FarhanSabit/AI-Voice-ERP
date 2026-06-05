@@ -675,7 +675,6 @@ export class PaymentsService {
         phone: true,
         currentBalance: true,
         creditLimit: true,
-        paymentTerms: true,
         lastPaymentDate: true,
         riskLevel: true,
         sales: {
@@ -708,7 +707,7 @@ export class PaymentsService {
               (1000 * 60 * 60 * 24),
           )
         : 0;
-      const paymentTermDays = party.paymentTerms ?? 30;
+      const paymentTermDays = 30;
       const effectiveOverdue = Math.max(0, overdueDays - paymentTermDays);
       const riskLevel = calcRiskLevel(effectiveOverdue, party.currentBalance);
 
@@ -773,7 +772,6 @@ export class PaymentsService {
         phone: true,
         currentBalance: true,
         creditLimit: true,
-        paymentTerms: true,
         lastPaymentDate: true,
         riskLevel: true,
       },
@@ -794,7 +792,7 @@ export class PaymentsService {
               (1000 * 60 * 60 * 24),
           )
         : 999;
-      const overdue = Math.max(0, daysSincePayment - (c.paymentTerms ?? 30));
+      const overdue = Math.max(0, daysSincePayment - 30);
 
       if (overdue > 90) buckets['90+'].push(c);
       else if (overdue > 60) buckets['61-90'].push(c);
