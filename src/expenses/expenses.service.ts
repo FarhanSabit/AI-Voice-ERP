@@ -12,6 +12,7 @@ import { UpdateExpenseDto } from './dto/update-expenses.dto';
 import { QueryExpenseDto } from './dto/query-expenses.dto';
 import { CreateExpenseCategoryDto } from './dto/create-expenses-category.dto';
 import { UpdateExpenseCategoryDto } from './dto/update-expenses-category.dto';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 // ─── Prisma include shape ─────────────────────────────────────────────────────
 
@@ -91,20 +92,35 @@ export class ExpensesService {
     private readonly prisma: PrismaService,
     @InjectPinoLogger(ExpensesService.name)
     private readonly logger: PinoLogger,
-  ) { }
+  ) {}
+
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // EXPENSES
   // ══════════════════════════════════════════════════════════════════════════
 
-  async findAll(businessId: string, branchId: string, query: QueryExpenseDto) {
+  async findAll(user: JwtUser, query: QueryExpenseDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const page = parseInt(query.page ?? '1', 10);
     const limit = parseInt(query.limit ?? '50', 10);
 
-    const where: Prisma.ExpenseWhereInput = { businessId, branchId };
+    const where: Prisma.ExpenseWhereInput = { businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
 
     if (query.categoryId) where.categoryId = query.categoryId;
-    if (query.branchId) where.branchId = query.branchId;
+    if (query.branchId && isMainBranch) where.branchId = query.branchId;
 
     if (query.startDate || query.endDate) {
       where.date = {};
@@ -150,12 +166,19 @@ export class ExpensesService {
 
   // ─── GET ONE ───────────────────────────────────────────────────────────────
   async findOne(
-    businessId: string,
-    branchId: string,
+    user: JwtUser,
     id: string,
   ): Promise<{ success: boolean; data: ExpenseWithCategory }> {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.ExpenseWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const expense = await this.prisma.expense.findFirst({
-      where: { id, businessId, branchId },
+      where,
       include: expenseInclude,
     });
 
@@ -165,12 +188,11 @@ export class ExpensesService {
   }
 
   // ─── CREATE ────────────────────────────────────────────────────────────────
-  async create(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreateExpenseDto,
-  ) {
+  async create(user: JwtUser, dto: CreateExpenseDto) {
+    const { branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     // Verify category belongs to this business or is a global template (null businessId)
     const category = await this.prisma.expenseCategory.findFirst({
       where: {
@@ -219,14 +241,17 @@ export class ExpensesService {
 
   // ─── UPDATE ────────────────────────────────────────────────────────────────
   // When amount changes: refund old amount → deduct new amount from account.
-  async update(
-    businessId: string,
-    branchId: string,
-    id: string,
-    dto: UpdateExpenseDto,
-  ) {
+  async update(user: JwtUser, id: string, dto: UpdateExpenseDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.ExpenseWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.expense.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
 
     if (!existing) throw new NotFoundException(`Expense ${id} not found.`);
@@ -312,9 +337,17 @@ export class ExpensesService {
 
   // ─── DELETE ────────────────────────────────────────────────────────────────
   // Hard delete — refunds the amount back to the account.
-  async remove(businessId: string, branchId: string, id: string) {
+  async remove(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.ExpenseWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.expense.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
 
     if (!existing) throw new NotFoundException(`Expense ${id} not found.`);
@@ -340,7 +373,9 @@ export class ExpensesService {
   }
 
   // ─── SUMMARY ───────────────────────────────────────────────────────────────
-  async getSummary(businessId: string, branchId: string) {
+  async getSummary(user: JwtUser) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const now = new Date();
 
     const todayStart = new Date(
@@ -359,6 +394,7 @@ export class ExpensesService {
     const makeWhere = (from: Date, to: Date): Prisma.ExpenseWhereInput => ({
       businessId,
       date: { gte: from, lt: to },
+      ...(!isMainBranch && { branchId }),
     });
 
     const [
@@ -391,13 +427,15 @@ export class ExpensesService {
         _avg: { amount: true },
       }),
       this.prisma.expense.aggregate({
-        where: { businessId, branchId },
+        where: { businessId, ...(!isMainBranch && { branchId }) },
         _sum: { amount: true },
         _avg: { amount: true },
       }),
       this.prisma.expense.count({ where: makeWhere(todayStart, todayEnd) }),
       this.prisma.expense.count({ where: makeWhere(monthStart, monthEnd) }),
-      this.prisma.expense.count({ where: { businessId, branchId } }),
+      this.prisma.expense.count({
+        where: { businessId, ...(!isMainBranch && { branchId }) },
+      }),
       // Top 5 categories by total spend this month
       this.prisma.expense.groupBy({
         by: ['categoryId'],
@@ -471,15 +509,24 @@ export class ExpensesService {
 
   // ─── LIST CATEGORIES ───────────────────────────────────────────────────────
   // Returns business-specific categories + global templates (businessId = null)
-  async findAllCategories() {
+  async findAllCategories(user: JwtUser) {
+    this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     const categories = await this.prisma.expenseCategory.findMany({
+      where: {
+        OR: [{ businessId }, { businessId: null }],
+      },
       orderBy: { name: 'asc' },
     });
     return { success: true, data: categories };
   }
 
   // ─── GET ONE CATEGORY ──────────────────────────────────────────────────────
-  async findOneCategory(businessId: string, id: string) {
+  async findOneCategory(user: JwtUser, id: string) {
+    this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     const category = await this.prisma.expenseCategory.findFirst({
       where: { id, OR: [{ businessId }, { businessId: null }] },
     });
@@ -491,7 +538,10 @@ export class ExpensesService {
   }
 
   // ─── CREATE CATEGORY ───────────────────────────────────────────────────────
-  async createCategory(businessId: string, dto: CreateExpenseCategoryDto) {
+  async createCategory(user: JwtUser, dto: CreateExpenseCategoryDto) {
+    this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     // @@unique([businessId, name]) handles duplicates — but give a clear error
     const existing = await this.prisma.expenseCategory.findFirst({
       where: { businessId, name: dto.name },
@@ -520,10 +570,13 @@ export class ExpensesService {
 
   // ─── UPDATE CATEGORY ───────────────────────────────────────────────────────
   async updateCategory(
-    businessId: string,
+    user: JwtUser,
     id: string,
     dto: UpdateExpenseCategoryDto,
   ) {
+    this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     const existing = await this.prisma.expenseCategory.findFirst({
       where: { id, businessId }, // only own categories are editable
     });
@@ -555,7 +608,10 @@ export class ExpensesService {
   }
 
   // ─── DELETE CATEGORY ───────────────────────────────────────────────────────
-  async removeCategory(businessId: string, id: string) {
+  async removeCategory(user: JwtUser, id: string) {
+    this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     const existing = await this.prisma.expenseCategory.findFirst({
       where: { id, businessId },
     });

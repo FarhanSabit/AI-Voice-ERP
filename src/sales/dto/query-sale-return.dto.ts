@@ -39,7 +39,7 @@ export class QuerySaleReturnDto {
   @ApiPropertyOptional({ default: 20 })
   @IsOptional()
   limit?: string;
-  
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

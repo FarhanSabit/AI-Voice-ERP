@@ -1,12 +1,16 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { EditSaleDto } from '../dto/edit-sale.dto';
 import { SaleStatus } from '../dto/update-sale.dto';
-import {
-  listSaleInclude,
-  transformListSale,
-} from '../sales.helpers';
+import { Prisma } from '@prisma/client';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
+import { listSaleInclude, transformListSale } from '../sales.helpers';
 
 @Injectable()
 export class SalesEditService {
@@ -16,15 +20,31 @@ export class SalesEditService {
     private readonly logger: PinoLogger,
   ) {}
 
-  async editSale(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-    dto: EditSaleDto,
-  ) {
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
+  async editSale(user: JwtUser, id: string, dto: EditSaleDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
+    const where: Prisma.SaleWhereInput = {
+      id,
+      businessId,
+    };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.sale.findFirst({
-      where: { id, businessId, ...(branchId && { branchId }) },
+      where,
       include: { items: true },
     });
 
@@ -38,16 +58,34 @@ export class SalesEditService {
       throw new ForbiddenException(`Cannot edit a ${existing.status} sale.`);
     }
 
-    const newPartyId = dto.partyId !== undefined ? dto.partyId : existing.partyId;
-    const newDiscount = dto.discount !== undefined ? dto.discount : existing.discount;
+    const newPartyId =
+      dto.partyId !== undefined ? dto.partyId : existing.partyId;
+    const newDiscount =
+      dto.discount !== undefined ? dto.discount : existing.discount;
     const newTax = dto.tax !== undefined ? dto.tax : existing.tax;
-    const newPaymentMethod = dto.paymentMethod !== undefined ? dto.paymentMethod : existing.paymentMethod;
-    const newPaidAmount = dto.paidAmount !== undefined ? dto.paidAmount : existing.paidAmount;
-    const newPricingTier = dto.pricingTier !== undefined ? dto.pricingTier : existing.pricingTier;
+    const newPaymentMethod =
+      dto.paymentMethod !== undefined
+        ? dto.paymentMethod
+        : existing.paymentMethod;
+    const newPaidAmount =
+      dto.paidAmount !== undefined ? dto.paidAmount : existing.paidAmount;
+    const newPricingTier =
+      dto.pricingTier !== undefined ? dto.pricingTier : existing.pricingTier;
     const newNotes = dto.notes !== undefined ? dto.notes : existing.notes;
 
     const sale = await this.prisma.$transaction(async (tx) => {
-      const saleItemsData: any[] = [];
+      interface SaleItemData {
+        itemId: string;
+        batchId: string | null;
+        itemName: string;
+        quantity: number;
+        unitPrice: number;
+        costPrice: number;
+        discount: number;
+        total: number;
+        profit: number;
+      }
+      const saleItemsData: SaleItemData[] = [];
       let newSubtotal = existing.subtotal;
       let newTotalProfit = existing.profit;
 
@@ -76,6 +114,7 @@ export class SalesEditService {
               businessId,
               itemId: oldItem.itemId,
               batchId: oldItem.batchId,
+              branchId: existing.branchId ?? branchId,
               type: 'adjustment',
               quantity: oldItem.quantity,
               previousStock: dbItem.currentStock,
@@ -91,8 +130,15 @@ export class SalesEditService {
 
         // Process new items
         for (const input of dto.items) {
-          const dbItem = await tx.item.findUnique({ where: { id: input.itemId } });
-          if (!dbItem) throw new BadRequestException(`Item not found: ${input.itemId}`);
+          const dbItem = await tx.item.findFirst({
+            where: {
+              id: input.itemId,
+              businessId,
+              ...(!isMainBranch && { branchId }),
+            },
+          });
+          if (!dbItem)
+            throw new BadRequestException(`Item not found: ${input.itemId}`);
 
           if (dbItem.currentStock < input.quantity) {
             throw new BadRequestException(
@@ -109,9 +155,9 @@ export class SalesEditService {
                 itemId: dbItem.id,
                 businessId,
                 isActive: true,
-                remainingQty: { gt: 0 }
+                remainingQty: { gt: 0 },
               },
-              orderBy: { expiryDate: 'asc' }
+              orderBy: { expiryDate: 'asc' },
             });
 
             for (const batch of batches) {
@@ -120,9 +166,13 @@ export class SalesEditService {
               const allocateQty = Math.min(qtyToFulfill, batch.remainingQty);
               qtyToFulfill -= allocateQty;
 
-              const allocatedDiscount = (itemDiscount / input.quantity) * allocateQty;
-              const allocatedTotal = allocateQty * input.unitPrice - allocatedDiscount;
-              const allocatedProfit = (input.unitPrice - batch.costPrice) * allocateQty - allocatedDiscount;
+              const allocatedDiscount =
+                (itemDiscount / input.quantity) * allocateQty;
+              const allocatedTotal =
+                allocateQty * input.unitPrice - allocatedDiscount;
+              const allocatedProfit =
+                (input.unitPrice - batch.costPrice) * allocateQty -
+                allocatedDiscount;
 
               saleItemsData.push({
                 itemId: dbItem.id,
@@ -138,16 +188,20 @@ export class SalesEditService {
 
               await tx.batch.update({
                 where: { id: batch.id },
-                data: { remainingQty: batch.remainingQty - allocateQty }
+                data: { remainingQty: batch.remainingQty - allocateQty },
               });
             }
 
             if (qtyToFulfill > 0) {
-              throw new BadRequestException(`Insufficient batch stock for "${dbItem.name}". Missing ${qtyToFulfill} units.`);
+              throw new BadRequestException(
+                `Insufficient batch stock for "${dbItem.name}". Missing ${qtyToFulfill} units.`,
+              );
             }
           } else {
             const itemTotal = input.quantity * input.unitPrice - itemDiscount;
-            const itemProfit = (input.unitPrice - dbItem.costPrice) * input.quantity - itemDiscount;
+            const itemProfit =
+              (input.unitPrice - dbItem.costPrice) * input.quantity -
+              itemDiscount;
 
             saleItemsData.push({
               itemId: dbItem.id,
@@ -180,7 +234,9 @@ export class SalesEditService {
             },
           });
 
-          const currentItem = await tx.item.findUnique({ where: { id: itemData.itemId } });
+          const currentItem = await tx.item.findUnique({
+            where: { id: itemData.itemId },
+          });
           const prevStock = currentItem!.currentStock;
           const newStock = prevStock - itemData.quantity;
 
@@ -197,6 +253,7 @@ export class SalesEditService {
               businessId,
               itemId: itemData.itemId,
               batchId: itemData.batchId,
+              branchId: existing.branchId ?? branchId,
               type: 'sale',
               quantity: -itemData.quantity,
               previousStock: prevStock,
@@ -219,8 +276,12 @@ export class SalesEditService {
       if (newPartyId) {
         const dueDiff = newDueAmount - existing.dueAmount;
         if (dueDiff !== 0) {
-          const party = await tx.party.findUnique({
-            where: { id: newPartyId },
+          const party = await tx.party.findFirst({
+            where: {
+              id: newPartyId,
+              businessId,
+              ...(!isMainBranch && { branchId }),
+            },
           });
           if (party) {
             const newBalance = party.currentBalance + dueDiff;
@@ -231,6 +292,7 @@ export class SalesEditService {
             await tx.partyLedger.create({
               data: {
                 businessId,
+                branchId: existing.branchId ?? branchId,
                 partyId: newPartyId,
                 type: 'adjustment',
                 referenceId: id,
@@ -265,7 +327,10 @@ export class SalesEditService {
       });
     });
 
-    this.logger.info({ saleId: id, businessId, branchId }, 'Sale edited');
+    this.logger.info(
+      { saleId: id, businessId, branchId: existing.branchId },
+      'Sale edited',
+    );
     return { success: true, data: transformListSale(sale) };
   }
 }

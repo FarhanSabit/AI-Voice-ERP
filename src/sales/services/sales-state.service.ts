@@ -1,11 +1,15 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { UpdateSaleDto, SaleStatus } from '../dto/update-sale.dto';
-import {
-  listSaleInclude,
-  transformListSale,
-} from '../sales.helpers';
+import { Prisma } from '@prisma/client';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
+import { listSaleInclude, transformListSale } from '../sales.helpers';
 
 @Injectable()
 export class SalesStateService {
@@ -15,15 +19,31 @@ export class SalesStateService {
     private readonly logger: PinoLogger,
   ) {}
 
-  async update(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-    dto: UpdateSaleDto,
-  ) {
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
+  async update(user: JwtUser, id: string, dto: UpdateSaleDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
+    const where: Prisma.SaleWhereInput = {
+      id,
+      businessId,
+    };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.sale.findFirst({
-      where: { id, businessId, ...(branchId && { branchId }) },
+      where,
       include: { items: true, party: true },
     });
 
@@ -60,6 +80,7 @@ export class SalesStateService {
           await tx.stockLedger.create({
             data: {
               businessId,
+              branchId: existing.branchId ?? branchId,
               itemId: saleItem.itemId,
               type: status === SaleStatus.CANCELLED ? 'adjustment' : 'return',
               quantity: saleItem.quantity,
@@ -89,6 +110,7 @@ export class SalesStateService {
             await tx.partyLedger.create({
               data: {
                 businessId,
+                branchId: existing.branchId ?? branchId,
                 partyId: existing.partyId,
                 type: 'adjustment',
                 referenceId: existing.id,
@@ -114,20 +136,27 @@ export class SalesStateService {
     });
 
     this.logger.info(
-      { saleId: id, businessId, branchId, status },
+      { saleId: id, businessId, branchId: existing.branchId, status },
       'Sale status updated',
     );
     return { success: true, data: transformListSale(sale) };
   }
 
-  async remove(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-  ) {
+  async remove(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
+    const where: Prisma.SaleWhereInput = {
+      id,
+      businessId,
+    };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.sale.findFirst({
-      where: { id, businessId, ...(branchId && { branchId }) },
+      where,
       include: { items: true },
     });
 
@@ -164,6 +193,7 @@ export class SalesStateService {
         await tx.stockLedger.create({
           data: {
             businessId,
+            branchId: existing.branchId ?? branchId,
             itemId: saleItem.itemId,
             type: 'adjustment',
             quantity: saleItem.quantity,
@@ -191,6 +221,7 @@ export class SalesStateService {
           await tx.partyLedger.create({
             data: {
               businessId,
+              branchId: existing.branchId ?? branchId,
               partyId: existing.partyId,
               type: 'adjustment',
               referenceId: existing.id,
@@ -210,7 +241,10 @@ export class SalesStateService {
       });
     });
 
-    this.logger.info({ saleId: id, businessId }, 'Sale deleted (soft)');
+    this.logger.info(
+      { saleId: id, businessId, branchId: existing.branchId },
+      'Sale deleted (soft)',
+    );
     return { success: true, data: { id } };
   }
 }

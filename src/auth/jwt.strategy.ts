@@ -68,6 +68,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         businessTypeId: true,
         isPhoneVerified: true,
         isActive: true,
+        branch: {
+          select: {
+            isMain: true,
+          },
+        },
       },
     });
 
@@ -91,6 +96,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: user.role,
       businessId: user.businessId,
       isPhoneVerified: user.isPhoneVerified,
+      isMainBranch: user.branch?.isMain ?? false,
     };
   }
 }

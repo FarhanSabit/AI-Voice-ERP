@@ -34,13 +34,13 @@ export class SaleReturnsController {
   @ApiOperation({ summary: 'List all sales returns' })
   @ApiResponse({ status: 200, description: 'Returns retrieved successfully' })
   findAll(@GetUser() user: JwtUser, @Query() query: QuerySaleReturnDto) {
-    return this.returnsService.findAll(user.businessId, user.branchId, query);
+    return this.returnsService.findAll(user, query);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a single sale return by ID' })
   findOne(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.returnsService.findOne(user.businessId, user.branchId, id);
+    return this.returnsService.findOne(user, id);
   }
 
   @Post()
@@ -51,12 +51,7 @@ export class SaleReturnsController {
     description: 'Validation error (quantity limit)',
   })
   create(@GetUser() user: JwtUser, @Body() dto: CreateSaleReturnDto) {
-    return this.returnsService.create(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+    return this.returnsService.create(user, dto);
   }
 
   @Patch(':id')
@@ -66,12 +61,12 @@ export class SaleReturnsController {
     @Param('id') id: string,
     @Body() dto: UpdateSaleReturnDto,
   ) {
-    return this.returnsService.update(user.businessId, user.branchId, id, dto);
+    return this.returnsService.update(user, id, dto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Cancel/void a return (soft delete with reversal)' })
   remove(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.returnsService.remove(user.businessId, user.branchId, id);
+    return this.returnsService.remove(user, id);
   }
 }

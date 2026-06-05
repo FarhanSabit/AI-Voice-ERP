@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateRoleDto {
@@ -18,7 +24,10 @@ export class CreateRoleDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ example: 'purple', enum: ['gray', 'blue', 'green', 'red', 'purple', 'orange'] })
+  @ApiPropertyOptional({
+    example: 'purple',
+    enum: ['gray', 'blue', 'green', 'red', 'purple', 'orange'],
+  })
   @IsOptional()
   @IsString()
   color?: string;

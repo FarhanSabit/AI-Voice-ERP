@@ -76,7 +76,10 @@ export class AuthController {
       'Throttled: 60 seconds between requests.',
   })
   @ApiResponse({ status: 200, description: 'OTP resent successfully' })
-  @ApiResponse({ status: 400, description: 'Throttled, wrong purpose, or user not found' })
+  @ApiResponse({
+    status: 400,
+    description: 'Throttled, wrong purpose, or user not found',
+  })
   resendOtp(@Body() dto: ResendOtpDto) {
     return this.authService.resendOtp(dto.userId, dto.purpose);
   }
@@ -92,7 +95,10 @@ export class AuthController {
     description: 'Authenticates the user and returns a JWT token immediately.',
   })
   @ApiResponse({ status: 200, description: 'Signin successful' })
-  @ApiResponse({ status: 401, description: 'Incorrect password or account deactivated' })
+  @ApiResponse({
+    status: 401,
+    description: 'Incorrect password or account deactivated',
+  })
   @ApiResponse({ status: 404, description: 'User not found' })
   async signin(
     @Body() dto: SigninDto,
@@ -107,7 +113,6 @@ export class AuthController {
 
     return result;
   }
-
 
   // GET /auth/status
   @UseGuards(JwtAuthGuard)
@@ -145,7 +150,10 @@ export class AuthController {
   @Get('business-types')
   @ApiOperation({ summary: 'Get list of business types' })
   @ApiResponse({ status: 200, description: 'Business types retrieved' })
-  @ApiResponse({ status: 401, description: 'Failed to retrieve business types' })
+  @ApiResponse({
+    status: 401,
+    description: 'Failed to retrieve business types',
+  })
   getBusinessTypes() {
     return this.authService.getBusinessTypes();
   }

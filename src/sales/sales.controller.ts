@@ -37,7 +37,7 @@ export class SalesController {
   @ApiOperation({ summary: 'List sales with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Sales retrieved successfully' })
   findAll(@GetUser() user: JwtUser, @Query() query: QuerySaleDto) {
-    return this.salesService.findAll(user.businessId, user.branchId, query);
+    return this.salesService.findAll(user, query);
   }
 
   // GET /sales/summary  — dashboard stats card data
@@ -51,7 +51,7 @@ export class SalesController {
   })
   @ApiResponse({ status: 200, description: 'Summary retrieved successfully' })
   getSummary(@GetUser() user: JwtUser) {
-    return this.salesService.getSummary(user.businessId, user.branchId);
+    return this.salesService.getSummary(user);
   }
 
   // GET /sales/:id
@@ -62,7 +62,7 @@ export class SalesController {
   @ApiResponse({ status: 200, description: 'Sale retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Sale not found' })
   findOne(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.salesService.findOne(user.businessId, user.branchId, id);
+    return this.salesService.findOne(user, id);
   }
 
   // POST /sales
@@ -74,12 +74,7 @@ export class SalesController {
     description: 'Validation error or insufficient stock',
   })
   create(@GetUser() user: JwtUser, @Body() dto: CreateSaleDto) {
-    return this.salesService.create(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+    return this.salesService.create(user, dto);
   }
 
   // PUT /sales/:id  — full edit (items, amounts, party, payment)
@@ -106,13 +101,7 @@ export class SalesController {
     @Param('id') id: string,
     @Body() dto: EditSaleDto,
   ) {
-    return this.salesService.editSale(
-      user.businessId,
-      user.branchId,
-      id,
-      user.id,
-      dto,
-    );
+    return this.salesService.editSale(user, id, dto);
   }
 
   // PATCH /sales/:id  — status-only update (cancel / return / complete)
@@ -129,13 +118,7 @@ export class SalesController {
     @Param('id') id: string,
     @Body() dto: UpdateSaleDto,
   ) {
-    return this.salesService.update(
-      user.businessId,
-      user.branchId,
-      id,
-      user.id,
-      dto,
-    );
+    return this.salesService.update(user, id, dto);
   }
 
   // DELETE /sales/:id  — soft delete (cancels sale, restores stock)
@@ -153,11 +136,6 @@ export class SalesController {
   })
   @ApiResponse({ status: 404, description: 'Sale not found' })
   remove(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.salesService.remove(
-      user.businessId,
-      user.branchId,
-      id,
-      user.id,
-    );
+    return this.salesService.remove(user, id);
   }
 }

@@ -31,7 +31,7 @@ import type { JwtUser } from 'src/auth/types/jwt-user.type';
 export class PartiesController {
   constructor(private readonly partiesService: PartiesService) {}
 
-  // GET /parties
+  // GET /parties -list api
   @Get()
   @ApiOperation({
     summary: 'List parties with filtering and pagination',
@@ -41,7 +41,7 @@ export class PartiesController {
   })
   @ApiResponse({ status: 200, description: 'Parties retrieved successfully' })
   findAll(@GetUser() user: JwtUser, @Query() query: QueryPartyDto) {
-    return this.partiesService.findAll(user.businessId, query);
+    return this.partiesService.findAll(user, query);
   }
 
   // GET /parties/:id
@@ -54,7 +54,7 @@ export class PartiesController {
   @ApiResponse({ status: 200, description: 'Party retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Party not found' })
   findOne(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.partiesService.findOne(user.businessId, id);
+    return this.partiesService.findOne(user, id);
   }
 
   // POST /parties
@@ -67,7 +67,7 @@ export class PartiesController {
   })
   @ApiResponse({ status: 409, description: 'Phone number already in use' })
   create(@GetUser() user: JwtUser, @Body() dto: CreatePartyDto) {
-    return this.partiesService.create(user.businessId, dto);
+    return this.partiesService.create(user, dto);
   }
 
   // PATCH /parties/:id
@@ -85,7 +85,7 @@ export class PartiesController {
     @Param('id') id: string,
     @Body() dto: UpdatePartyDto,
   ) {
-    return this.partiesService.update(user.businessId, id, dto);
+    return this.partiesService.update(user, id, dto);
   }
 
   // DELETE /parties/:id  — soft delete
@@ -102,7 +102,7 @@ export class PartiesController {
   })
   @ApiResponse({ status: 404, description: 'Party not found' })
   remove(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.partiesService.remove(user.businessId, id);
+    return this.partiesService.remove(user, id);
   }
 
   // GET /parties/:id/ledger
@@ -119,7 +119,7 @@ export class PartiesController {
     @Query('limit') limit = '50',
   ) {
     return this.partiesService.getLedger(
-      user.businessId,
+      user,
       id,
       parseInt(page, 10),
       parseInt(limit, 10),

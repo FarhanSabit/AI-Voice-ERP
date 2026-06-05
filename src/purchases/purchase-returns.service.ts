@@ -6,7 +6,12 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Prisma } from '@prisma/client';
-import { CreatePurchaseReturnDto, PurchaseRefundMethod } from './dto/create-purchase-return.dto';
+import {
+  CreatePurchaseReturnDto,
+  PurchaseRefundMethod,
+} from './dto/create-purchase-return.dto';
+
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 const listPurchaseReturnInclude = {
   items: true,
@@ -20,6 +25,16 @@ export class PurchaseReturnsService {
     @InjectPinoLogger(PurchaseReturnsService.name)
     private readonly logger: PinoLogger,
   ) {}
+
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
 
   private async generateReturnNo(
     tx: Prisma.TransactionClient,
@@ -49,9 +64,14 @@ export class PurchaseReturnsService {
     return `${prefix}${String(next).padStart(4, '0')}`;
   }
 
-  async findAll(businessId: string, branchId: string) {
+  async findAll(user: JwtUser) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     const where: Prisma.PurchaseReturnWhereInput = { businessId };
-    if (branchId) where.branchId = branchId;
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
 
     const returns = await this.prisma.purchaseReturn.findMany({
       where,
@@ -62,22 +82,33 @@ export class PurchaseReturnsService {
     return { success: true, data: returns };
   }
 
-  async findOne(businessId: string, branchId: string, id: string) {
+  async findOne(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PurchaseReturnWhereInput = {
+      id,
+      businessId,
+    };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const record = await this.prisma.purchaseReturn.findFirst({
-      where: { id, businessId, ...(branchId && { branchId }) },
+      where,
       include: listPurchaseReturnInclude,
     });
 
-    if (!record) throw new NotFoundException(`Purchase Return ${id} not found.`);
+    if (!record)
+      throw new NotFoundException(`Purchase Return ${id} not found.`);
     return { success: true, data: record };
   }
 
-  async create(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreatePurchaseReturnDto,
-  ) {
+  async create(user: JwtUser, dto: CreatePurchaseReturnDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const {
       purchaseId,
       items,
@@ -91,24 +122,34 @@ export class PurchaseReturnsService {
 
     const returnRecord = await this.prisma.$transaction(async (tx) => {
       const originalPurchase = await tx.purchase.findFirst({
-        where: { id: purchaseId, businessId, ...(branchId && { branchId }) },
+        where: {
+          id: purchaseId,
+          businessId,
+          ...(!isMainBranch && { branchId }),
+        },
         include: { items: true },
       });
 
-      if (!originalPurchase) throw new NotFoundException(`Purchase transaction not found`);
+      if (!originalPurchase)
+        throw new NotFoundException(`Purchase transaction not found`);
 
       const returnNo = await this.generateReturnNo(tx, businessId);
       let subtotal = 0;
       const returnItemsData: any[] = [];
 
       for (const inputItem of items) {
-        const pItem = originalPurchase.items.find((i) => i.id === inputItem.purchaseItemId);
-        if (!pItem) throw new BadRequestException(`Purchase item ${inputItem.purchaseItemId} not found`);
+        const pItem = originalPurchase.items.find(
+          (i) => i.id === inputItem.purchaseItemId,
+        );
+        if (!pItem)
+          throw new BadRequestException(
+            `Purchase item ${inputItem.purchaseItemId} not found`,
+          );
 
         const availableToReturn = pItem.quantity - pItem.returnedQty;
         if (inputItem.quantity > availableToReturn) {
           throw new BadRequestException(
-            `Cannot return ${inputItem.quantity} units for ${inputItem.itemName}. Maximum allowed is ${availableToReturn}.`
+            `Cannot return ${inputItem.quantity} units for ${inputItem.itemName}. Maximum allowed is ${availableToReturn}.`,
           );
         }
 
@@ -132,7 +173,9 @@ export class PurchaseReturnsService {
         });
 
         // 2. Reduce Stock
-        const item = await tx.item.findUnique({ where: { id: inputItem.itemId } });
+        const item = await tx.item.findUnique({
+          where: { id: inputItem.itemId },
+        });
         if (item) {
           const newStock = Math.max(0, item.currentStock - inputItem.quantity);
           await tx.item.update({
@@ -143,6 +186,7 @@ export class PurchaseReturnsService {
           await tx.stockLedger.create({
             data: {
               businessId,
+              branchId,
               itemId: item.id,
               batchId: pItem.batchId,
               type: 'return_out',
@@ -159,11 +203,18 @@ export class PurchaseReturnsService {
 
         // 3. Reconcile batches if applicable
         if (pItem.batchId) {
-          const batch = await tx.batch.findUnique({ where: { id: pItem.batchId } });
+          const batch = await tx.batch.findUnique({
+            where: { id: pItem.batchId },
+          });
           if (batch) {
             await tx.batch.update({
               where: { id: batch.id },
-              data: { remainingQty: Math.max(0, batch.remainingQty - inputItem.quantity) },
+              data: {
+                remainingQty: Math.max(
+                  0,
+                  batch.remainingQty - inputItem.quantity,
+                ),
+              },
             });
           }
         }
@@ -175,7 +226,7 @@ export class PurchaseReturnsService {
       const newReturn = await tx.purchaseReturn.create({
         data: {
           businessId,
-          branchId: branchId || null,
+          branchId,
           purchaseId,
           returnNo,
           supplierId,
@@ -183,7 +234,8 @@ export class PurchaseReturnsService {
           discount,
           tax,
           total,
-          refundAmount: refundMethod !== PurchaseRefundMethod.REPLACEMENT ? total : 0,
+          refundAmount:
+            refundMethod !== PurchaseRefundMethod.REPLACEMENT ? total : 0,
           refundMethod,
           reason,
           notes,
@@ -197,7 +249,13 @@ export class PurchaseReturnsService {
 
       // 4. Financial & Party Ledger Reconciliation
       if (supplierId && refundMethod === PurchaseRefundMethod.DEBIT_NOTE) {
-        const party = await tx.party.findUnique({ where: { id: supplierId } });
+        const party = await tx.party.findFirst({
+          where: {
+            id: supplierId,
+            businessId,
+            ...(!isMainBranch && { branchId }),
+          },
+        });
         if (party) {
           const noteNo = await this.generateDebitNoteNo(tx, businessId);
           await tx.debitNote.create({
@@ -219,10 +277,11 @@ export class PurchaseReturnsService {
             where: { id: supplierId },
             data: { currentBalance: newBalance },
           });
-          
+
           await tx.partyLedger.create({
             data: {
               businessId,
+              branchId,
               partyId: supplierId,
               type: 'debit_note',
               referenceId: newReturn.id,
@@ -234,8 +293,18 @@ export class PurchaseReturnsService {
             },
           });
         }
-      } else if (supplierId && (refundMethod === PurchaseRefundMethod.CASH || refundMethod === PurchaseRefundMethod.BANK)) {
-        const party = await tx.party.findUnique({ where: { id: supplierId } });
+      } else if (
+        supplierId &&
+        (refundMethod === PurchaseRefundMethod.CASH ||
+          refundMethod === PurchaseRefundMethod.BANK)
+      ) {
+        const party = await tx.party.findFirst({
+          where: {
+            id: supplierId,
+            businessId,
+            ...(!isMainBranch && { branchId }),
+          },
+        });
         if (party) {
           const newBalance = party.currentBalance - total;
           await tx.party.update({
@@ -246,6 +315,7 @@ export class PurchaseReturnsService {
           await tx.partyLedger.create({
             data: {
               businessId,
+              branchId,
               partyId: supplierId,
               type: 'refund',
               referenceId: newReturn.id,
@@ -258,28 +328,30 @@ export class PurchaseReturnsService {
           });
 
           if (accountId) {
-             const account = await tx.account.findUnique({ where: { id: accountId } });
-             if (account) {
-                 await tx.account.update({
-                    where: { id: accountId },
-                    data: { currentBalance: account.currentBalance + total } // Supplier returned cash to us
-                 });
+            const account = await tx.account.findUnique({
+              where: { id: accountId },
+            });
+            if (account) {
+              await tx.account.update({
+                where: { id: accountId },
+                data: { currentBalance: account.currentBalance + total }, // Supplier returned cash to us
+              });
 
-                 await tx.payment.create({
-                   data: {
-                     businessId,
-                     branchId: branchId || undefined,
-                     partyId: supplierId,
-                     type: 'refund_received',
-                     mode: refundMethod,
-                     accountId: accountId,
-                     amount: total,
-                     purchaseId: purchaseId,
-                     reference: `Refund for PR ${returnNo}`,
-                     createdBy: userId,
-                   }
-                 });
-             }
+              await tx.payment.create({
+                data: {
+                  businessId,
+                  branchId,
+                  partyId: supplierId,
+                  type: 'refund_received',
+                  mode: refundMethod,
+                  accountId: accountId,
+                  amount: total,
+                  purchaseId: purchaseId,
+                  reference: `Refund for PR ${returnNo}`,
+                  createdBy: userId,
+                },
+              });
+            }
           }
         }
       }
@@ -287,7 +359,10 @@ export class PurchaseReturnsService {
       return newReturn;
     });
 
-    this.logger.info({ returnId: returnRecord.id, businessId }, 'Purchase Return processed');
+    this.logger.info(
+      { returnId: returnRecord.id, businessId },
+      'Purchase Return processed',
+    );
     return { success: true, data: returnRecord };
   }
 }

@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
@@ -10,6 +11,7 @@ import { Prisma } from '@prisma/client';
 import { CreatePartyDto } from './dto/create-party.dto';
 import { UpdatePartyDto } from './dto/update-party.dto';
 import { QueryPartyDto } from './dto/query-party.dto';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 // ─── Prisma include shapes ────────────────────────────────────────────────────
 
@@ -85,21 +87,39 @@ export class PartiesService {
     private readonly logger: PinoLogger,
   ) {}
 
+  // ─── private helper: Check Branch Access ───────────────────────────────────
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
   // ─── LIST ──────────────────────────────────────────────────────────────────
-  async findAll(businessId: string, query: QueryPartyDto) {
+  async findAll(user: JwtUser, query: QueryPartyDto) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
     const page = parseInt(query.page ?? '1', 10);
     const limit = parseInt(query.limit ?? '50', 10);
 
     const where: Prisma.PartyWhereInput = {
-      businessId,
+      businessId: user.businessId,
       // Show only active by default unless caller explicitly passes isActive=false
       isActive: query.isActive !== undefined ? query.isActive : true,
     };
 
     if (query.type && query.type !== 'all') where.type = query.type;
-    if (query.branchId) where.branchId = query.branchId;
     if (query.customerTier) where.customerTier = query.customerTier;
     if (query.riskLevel) where.riskLevel = query.riskLevel;
+
+    // Enforce branch isolation
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    } else if (query.branchId) {
+      where.branchId = query.branchId;
+    }
 
     if (query.search) {
       where.OR = [
@@ -154,9 +174,20 @@ export class PartiesService {
   }
 
   // ─── GET ONE ───────────────────────────────────────────────────────────────
-  async findOne(businessId: string, id: string) {
+  async findOne(user: JwtUser, id: string) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
+
+    const where: Prisma.PartyWhereInput = {
+      id,
+      businessId: user.businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const party = await this.prisma.party.findFirst({
-      where: { id, businessId },
+      where,
       include: singlePartyInclude,
     });
 
@@ -213,7 +244,11 @@ export class PartiesService {
   }
 
   // ─── CREATE ────────────────────────────────────────────────────────────────
-  async create(businessId: string, dto: CreatePartyDto) {
+  async create(user: JwtUser, dto: CreatePartyDto) {
+    const { isMainBranch, branchId: userBranchId } =
+      this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     // Duplicate phone guard
     if (dto.phone) {
       const existing = await this.prisma.party.findFirst({
@@ -226,20 +261,20 @@ export class PartiesService {
       }
     }
 
-    // Validate category ownership
-    // if (dto.categoryId) {
-    //   const category = await this.prisma.partyCategory.findUnique({
-    //     where: { id: dto.categoryId },
-    //   });
-    //   if (!category || category.businessId !== businessId) {
-    //     throw new BadRequestException('Invalid party category.');
-    //   }
-    // }
+    // Determine branchId based on permissions
+    let finalBranchId: string | null = null;
+    if (!isMainBranch) {
+      // Sub-branch users are locked to their own branch
+      finalBranchId = userBranchId;
+    } else {
+      // Main branch users can specify branchId or fall back to their main branch
+      finalBranchId = dto.branchId || userBranchId;
+    }
 
     // Validate branch ownership
-    if (dto.branchId) {
+    if (finalBranchId) {
       const branch = await this.prisma.branch.findUnique({
-        where: { id: dto.branchId },
+        where: { id: finalBranchId },
       });
       if (!branch || branch.businessId !== businessId) {
         throw new BadRequestException('Invalid branch.');
@@ -259,7 +294,7 @@ export class PartiesService {
           type: dto.type ?? 'customer',
           // customerTier: dto.customerTier ?? null,
           // categoryId: dto.categoryId ?? null,
-          branchId: dto.branchId ?? null,
+          branchId: finalBranchId,
           openingBalance,
           currentBalance: openingBalance,
           creditLimit: dto.creditLimit ?? null,
@@ -278,7 +313,7 @@ export class PartiesService {
         await tx.partyLedger.create({
           data: {
             businessId,
-            branchId: dto.branchId ?? null,
+            branchId: finalBranchId,
             partyId: newParty.id,
             type: 'opening',
             amount: openingBalance,
@@ -300,9 +335,22 @@ export class PartiesService {
   }
 
   // ─── UPDATE ────────────────────────────────────────────────────────────────
-  async update(businessId: string, id: string, dto: UpdatePartyDto) {
+  async update(user: JwtUser, id: string, dto: UpdatePartyDto) {
+    const { isMainBranch, branchId: userBranchId } =
+      this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PartyWhereInput = {
+      id,
+      businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = userBranchId;
+    }
+
     const existing = await this.prisma.party.findFirst({
-      where: { id, businessId },
+      where,
     });
 
     if (!existing) throw new NotFoundException(`Party ${id} not found.`);
@@ -334,10 +382,21 @@ export class PartiesService {
       }
     }
 
+    // Determine branchId for update
+    let finalBranchId: string | null | undefined = undefined;
+    if (dto.branchId !== undefined) {
+      if (!isMainBranch) {
+        throw new ForbiddenException(
+          'Sub-branch users cannot change party branch association.',
+        );
+      }
+      finalBranchId = dto.branchId;
+    }
+
     // Validate branch
-    if (dto.branchId !== undefined && dto.branchId !== null) {
+    if (finalBranchId) {
       const branch = await this.prisma.branch.findUnique({
-        where: { id: dto.branchId },
+        where: { id: finalBranchId },
       });
       if (!branch || branch.businessId !== businessId) {
         throw new BadRequestException('Invalid branch.');
@@ -363,7 +422,7 @@ export class PartiesService {
         ...(dto.categoryId !== undefined && {
           categoryId: dto.categoryId ?? null,
         }),
-        ...(dto.branchId !== undefined && { branchId: dto.branchId ?? null }),
+        ...(finalBranchId !== undefined && { branchId: finalBranchId }),
         ...(dto.creditLimit !== undefined && {
           creditLimit: dto.creditLimit ?? null,
         }),
@@ -384,9 +443,22 @@ export class PartiesService {
   }
 
   // ─── DELETE (soft) ─────────────────────────────────────────────────────────
-  async remove(businessId: string, id: string) {
+  async remove(user: JwtUser, id: string) {
+    const { isMainBranch, branchId: userBranchId } =
+      this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PartyWhereInput = {
+      id,
+      businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = userBranchId;
+    }
+
     const existing = await this.prisma.party.findFirst({
-      where: { id, businessId },
+      where,
     });
 
     if (!existing) throw new NotFoundException(`Party ${id} not found.`);
@@ -424,15 +496,23 @@ export class PartiesService {
 
   // ─── LEDGER ────────────────────────────────────────────────────────────────
   // GET /parties/:id/ledger  — paginated full ledger history
-  async getLedger(
-    businessId: string,
-    partyId: string,
-    page: number,
-    limit: number,
-  ) {
-    // Verify party belongs to business
+  async getLedger(user: JwtUser, partyId: string, page: number, limit: number) {
+    const { isMainBranch, branchId: userBranchId } =
+      this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PartyWhereInput = {
+      id: partyId,
+      businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = userBranchId;
+    }
+
+    // Verify party belongs to business and is accessible by user's branch
     const party = await this.prisma.party.findFirst({
-      where: { id: partyId, businessId },
+      where,
       select: { id: true, name: true, currentBalance: true },
     });
 

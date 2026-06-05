@@ -11,6 +11,8 @@ import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { QueryPurchaseDto } from './dto/query-purchase.dto';
 
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
+
 const listPurchaseInclude = {
   items: {
     include: {
@@ -28,12 +30,20 @@ export const PURCHASE_STATUS = {
   CANCELLED: 'cancelled',
 } as const;
 
-export type PurchaseStatus = typeof PURCHASE_STATUS[keyof typeof PURCHASE_STATUS];
+export type PurchaseStatus =
+  (typeof PURCHASE_STATUS)[keyof typeof PURCHASE_STATUS];
 
-const ACCOUNT_TYPE_MAP: Record<string, { type: string; name: string; nameBn: string }> = {
+const ACCOUNT_TYPE_MAP: Record<
+  string,
+  { type: string; name: string; nameBn: string }
+> = {
   cash: { type: 'cash', name: 'Cash', nameBn: 'নগদ' },
   bank: { type: 'bank', name: 'Bank', nameBn: 'ব্যাংক' },
-  mobile_banking: { type: 'mobile_wallet', name: 'Mobile Wallet', nameBn: 'মোবাইল ওয়ালেট' },
+  mobile_banking: {
+    type: 'mobile_wallet',
+    name: 'Mobile Wallet',
+    nameBn: 'মোবাইল ওয়ালেট',
+  },
 };
 
 @Injectable()
@@ -42,7 +52,17 @@ export class PurchasesService {
     private readonly prisma: PrismaService,
     @InjectPinoLogger(PurchasesService.name)
     private readonly logger: PinoLogger,
-  ) { }
+  ) {}
+
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
 
   private async generatePurchaseNo(
     tx: Prisma.TransactionClient,
@@ -54,16 +74,21 @@ export class PurchasesService {
       where: { businessId, id: { startsWith: prefix } },
       orderBy: { grnNo: 'desc' },
     });
-    const next = last && last.grnNo ? parseInt(last.grnNo.slice(-4), 10) + 1 : 1;
+    const next =
+      last && last.grnNo ? parseInt(last.grnNo.slice(-4), 10) + 1 : 1;
     return `${prefix}${String(next).padStart(4, '0')}`;
   }
 
-  async findAll(businessId: string, branchId: string, query: QueryPurchaseDto) {
+  async findAll(user: JwtUser, query: QueryPurchaseDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const page = parseInt(query.page?.toString() ?? '1', 10);
     const limit = parseInt(query.limit?.toString() ?? '20', 10);
 
     const where: Prisma.PurchaseWhereInput = { businessId };
-    if (branchId) where.branchId = branchId;
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
     if (query.supplierId) where.supplierId = query.supplierId;
     if (query.status && query.status !== 'all') where.status = query.status;
 
@@ -103,9 +128,20 @@ export class PurchasesService {
     };
   }
 
-  async findOne(businessId: string, branchId: string, id: string) {
+  async findOne(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PurchaseWhereInput = {
+      id,
+      businessId,
+    };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const purchase = await this.prisma.purchase.findFirst({
-      where: { id, businessId, ...(branchId && { branchId }) },
+      where,
       include: listPurchaseInclude,
     });
 
@@ -113,12 +149,11 @@ export class PurchasesService {
     return { success: true, data: purchase };
   }
 
-  async create(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreatePurchaseDto,
-  ) {
+  async create(user: JwtUser, dto: CreatePurchaseDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const {
       supplierId,
       invoiceNo,
@@ -134,12 +169,27 @@ export class PurchasesService {
     const purchase = await this.prisma.$transaction(async (tx) => {
       const generatedGrnNo = await this.generatePurchaseNo(tx, businessId);
 
-      const purchaseItemsData: any[] = [];
+      interface PurchaseItemData {
+        itemId: string;
+        batchId: string | null;
+        itemName: string;
+        quantity: number;
+        unitCost: number;
+        total: number;
+      }
+      const purchaseItemsData: PurchaseItemData[] = [];
       let subtotal = 0;
 
       for (const input of items) {
-        const dbItem = await tx.item.findUnique({ where: { id: input.itemId } });
-        if (!dbItem) throw new BadRequestException(`Item not found: ${input.itemId}`);
+        const dbItem = await tx.item.findFirst({
+          where: {
+            id: input.itemId,
+            businessId,
+            ...(!isMainBranch && { branchId }),
+          },
+        });
+        if (!dbItem)
+          throw new BadRequestException(`Item not found: ${input.itemId}`);
 
         const itemTotal = input.quantity * input.unitCost;
         subtotal += itemTotal;
@@ -148,8 +198,13 @@ export class PurchasesService {
 
         // If batch tracked, create a batch
         if (dbItem.trackBatch || input.trackBatch) {
-          const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-          const batchNumber = input.batchNumber || `BATCH-${dateStr}-${Math.floor(Math.random() * 10000)}`;
+          const dateStr = new Date()
+            .toISOString()
+            .slice(0, 10)
+            .replace(/-/g, '');
+          const batchNumber =
+            input.batchNumber ||
+            `BATCH-${dateStr}-${Math.floor(Math.random() * 10000)}`;
 
           const newBatch = await tx.batch.create({
             data: {
@@ -161,7 +216,9 @@ export class PurchasesService {
               costPrice: input.unitCost,
               mrp: input.mrp,
               expiryDate: input.expiryDate ? new Date(input.expiryDate) : null,
-              manufactureDate: input.manufactureDate ? new Date(input.manufactureDate) : null,
+              manufactureDate: input.manufactureDate
+                ? new Date(input.manufactureDate)
+                : null,
               location: input.location,
             },
           });
@@ -180,12 +237,17 @@ export class PurchasesService {
 
       const total = subtotal - discount + tax;
       const dueAmount = total - paidAmount;
-      const status = dueAmount > 0 ? (paidAmount > 0 ? PURCHASE_STATUS.PARTIAL : PURCHASE_STATUS.PENDING) : PURCHASE_STATUS.RECEIVED;
+      const status =
+        dueAmount > 0
+          ? paidAmount > 0
+            ? PURCHASE_STATUS.PARTIAL
+            : PURCHASE_STATUS.PENDING
+          : PURCHASE_STATUS.RECEIVED;
 
       const newPurchase = await tx.purchase.create({
         data: {
           businessId,
-          branchId: branchId || null,
+          branchId,
           supplierId: supplierId || null,
           invoiceNo: invoiceNo || null,
           grnNo: generatedGrnNo,
@@ -207,7 +269,9 @@ export class PurchasesService {
 
       // Stock Updates and Ledger Entry
       for (const itemData of purchaseItemsData) {
-        const currentItem = await tx.item.findUnique({ where: { id: itemData.itemId } });
+        const currentItem = await tx.item.findUnique({
+          where: { id: itemData.itemId },
+        });
         const prevStock = currentItem!.currentStock;
         const newStock = prevStock + itemData.quantity;
 
@@ -216,13 +280,14 @@ export class PurchasesService {
           data: {
             currentStock: newStock,
             costPrice: itemData.unitCost, // update item cost price
-            lastPurchaseDate: new Date()
+            lastPurchaseDate: new Date(),
           },
         });
 
         await tx.stockLedger.create({
           data: {
             businessId,
+            branchId,
             itemId: itemData.itemId,
             batchId: itemData.batchId,
             type: 'purchase',
@@ -238,7 +303,13 @@ export class PurchasesService {
 
       // Party Ledger updates
       if (supplierId && dueAmount > 0) {
-        const party = await tx.party.findUnique({ where: { id: supplierId } });
+        const party = await tx.party.findFirst({
+          where: {
+            id: supplierId,
+            businessId,
+            ...(!isMainBranch && { branchId }),
+          },
+        });
         if (party) {
           const newBalance = party.currentBalance + dueAmount;
           await tx.party.update({
@@ -248,6 +319,7 @@ export class PurchasesService {
           await tx.partyLedger.create({
             data: {
               businessId,
+              branchId,
               partyId: supplierId,
               type: 'purchase',
               referenceId: newPurchase.id,
@@ -263,17 +335,21 @@ export class PurchasesService {
 
       // Handle immediate payments
       if (paidAmount > 0) {
-        const accountMeta = ACCOUNT_TYPE_MAP[paymentMethod] ?? ACCOUNT_TYPE_MAP['cash'];
+        const accountMeta =
+          ACCOUNT_TYPE_MAP[paymentMethod] ?? ACCOUNT_TYPE_MAP['cash'];
 
         // Find existing account or create one
         let account = accountId
           ? await tx.account.findUnique({ where: { id: accountId } })
-          : await tx.account.findFirst({ where: { businessId, branchId, type: accountMeta.type } });
+          : await tx.account.findFirst({
+              where: { businessId, branchId, type: accountMeta.type },
+            });
 
         if (!account) {
           account = await tx.account.create({
             data: {
               businessId,
+              branchId,
               name: accountMeta.name,
               nameBn: accountMeta.nameBn,
               type: accountMeta.type,
@@ -293,7 +369,7 @@ export class PurchasesService {
         await tx.payment.create({
           data: {
             businessId,
-            branchId: branchId || undefined,
+            branchId,
             partyId: supplierId || undefined,
             type: 'purchase',
             mode: paymentMethod,
@@ -309,19 +385,28 @@ export class PurchasesService {
       return newPurchase;
     });
 
-    this.logger.info({ purchaseId: purchase.id, businessId }, 'Purchase created');
+    this.logger.info(
+      { purchaseId: purchase.id, businessId },
+      'Purchase created',
+    );
     return { success: true, data: purchase };
   }
 
-  async updateStatus(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-    dto: UpdatePurchaseDto,
-  ) {
+  async updateStatus(user: JwtUser, id: string, dto: UpdatePurchaseDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
+    const where: Prisma.PurchaseWhereInput = {
+      id,
+      businessId,
+    };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.purchase.findFirst({
-      where: { id, businessId, ...(branchId && { branchId }) },
+      where,
       include: { items: true, supplier: true },
     });
 
@@ -337,7 +422,9 @@ export class PurchasesService {
       // Handle cancellation logic (reversing)
       if (status === PURCHASE_STATUS.CANCELLED) {
         for (const purchaseItem of existing.items) {
-          const item = await tx.item.findUnique({ where: { id: purchaseItem.itemId } });
+          const item = await tx.item.findUnique({
+            where: { id: purchaseItem.itemId },
+          });
           if (!item) continue;
 
           const restoredStock = item.currentStock - purchaseItem.quantity;
@@ -357,6 +444,7 @@ export class PurchasesService {
           await tx.stockLedger.create({
             data: {
               businessId,
+              branchId: existing.branchId ?? branchId,
               itemId: purchaseItem.itemId,
               type: 'adjustment',
               quantity: -purchaseItem.quantity,
@@ -370,9 +458,15 @@ export class PurchasesService {
           });
         }
 
-        // Reverse party ledger 
+        // Reverse party ledger
         if (existing.supplierId && existing.dueAmount > 0) {
-          const party = await tx.party.findUnique({ where: { id: existing.supplierId } });
+          const party = await tx.party.findFirst({
+            where: {
+              id: existing.supplierId,
+              businessId,
+              ...(!isMainBranch && { branchId }),
+            },
+          });
           if (party) {
             const newBalance = party.currentBalance - existing.dueAmount;
             await tx.party.update({
@@ -382,6 +476,7 @@ export class PurchasesService {
             await tx.partyLedger.create({
               data: {
                 businessId,
+                branchId: existing.branchId ?? branchId,
                 partyId: existing.supplierId,
                 type: 'adjustment',
                 referenceId: existing.id,
@@ -406,11 +501,14 @@ export class PurchasesService {
       });
     });
 
-    this.logger.info({ purchaseId: id, businessId, status }, 'Purchase status updated');
+    this.logger.info(
+      { purchaseId: id, businessId, status },
+      'Purchase status updated',
+    );
     return { success: true, data: purchase };
   }
 
-  async remove(businessId: string, branchId: string, id: string, userId: string | null) {
-    return this.updateStatus(businessId, branchId, id, userId, { status: PURCHASE_STATUS.CANCELLED });
+  async remove(user: JwtUser, id: string) {
+    return this.updateStatus(user, id, { status: PURCHASE_STATUS.CANCELLED });
   }
 }

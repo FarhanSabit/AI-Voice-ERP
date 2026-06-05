@@ -5,7 +5,9 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 function getDaysUntilExpiry(expiryDate: Date | null): number | null {
   if (!expiryDate) return null;
   const now = new Date();
-  return Math.ceil((new Date(expiryDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.ceil(
+    (new Date(expiryDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+  );
 }
 
 function getBatchStatus(batch: any): string {
@@ -25,7 +27,7 @@ export class BatchesService {
     private readonly prisma: PrismaService,
     @InjectPinoLogger(BatchesService.name)
     private readonly logger: PinoLogger,
-  ) { }
+  ) {}
 
   async getStatus(businessId: string) {
     const batches = await this.prisma.batch.findMany({
@@ -34,7 +36,7 @@ export class BatchesService {
         isActive: true,
         remainingQty: true,
         expiryDate: true,
-      }
+      },
     });
 
     let activeBatches = 0;
@@ -55,15 +57,18 @@ export class BatchesService {
         expired,
         expiringIn30Days,
         activeBatches,
-      }
+      },
     };
   }
 
-  async findAll(businessId: string, search?: string, statusFilter?: string, page: number = 1, limit: number = 10) {
-    const conditions: any[] = [
-      { businessId },
-      { deletedAt: null }
-    ];
+  async findAll(
+    businessId: string,
+    search?: string,
+    statusFilter?: string,
+    page: number = 1,
+    limit: number = 10,
+  ) {
+    const conditions: any[] = [{ businessId }, { deletedAt: null }];
 
     if (search) {
       conditions.push({
@@ -71,7 +76,7 @@ export class BatchesService {
           { batchNumber: { contains: search, mode: 'insensitive' } },
           { item: { name: { contains: search, mode: 'insensitive' } } },
           { item: { sku: { contains: search, mode: 'insensitive' } } },
-        ]
+        ],
       });
     }
 
@@ -86,7 +91,9 @@ export class BatchesService {
     } else if (statusFilter === 'expiring') {
       conditions.push({ isActive: true });
       conditions.push({ remainingQty: { gt: 0 } });
-      conditions.push({ expiryDate: { gt: now, lte: thirtyDaysFromNow, not: null } });
+      conditions.push({
+        expiryDate: { gt: now, lte: thirtyDaysFromNow, not: null },
+      });
     } else if (statusFilter === 'depleted') {
       conditions.push({ isActive: true });
       conditions.push({ remainingQty: { lte: 0 } });
@@ -96,10 +103,7 @@ export class BatchesService {
       conditions.push({ isActive: true });
       conditions.push({ remainingQty: { gt: 0 } });
       conditions.push({
-        OR: [
-          { expiryDate: null },
-          { expiryDate: { gt: thirtyDaysFromNow } }
-        ]
+        OR: [{ expiryDate: null }, { expiryDate: { gt: thirtyDaysFromNow } }],
       });
     }
 
@@ -114,10 +118,10 @@ export class BatchesService {
         orderBy: [{ expiryDate: 'asc' }, { createdAt: 'desc' }],
         skip,
         take: limit,
-      })
+      }),
     ]);
 
-    const enriched = batches.map(b => {
+    const enriched = batches.map((b) => {
       const { item, ...rest } = b;
       return {
         ...rest,
@@ -136,8 +140,8 @@ export class BatchesService {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit)
-      }
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 }

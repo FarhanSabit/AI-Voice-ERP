@@ -8,6 +8,7 @@ export type JwtUser = {
   isPhoneVerified: boolean;
   role: string;
   businessId: string;
+  isMainBranch: boolean;
   iat?: number; // Issued at (added automatically by JWT)
   exp?: number; // Expiration (added automatically by JWT)
 };

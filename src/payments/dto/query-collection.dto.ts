@@ -25,7 +25,10 @@ export class QueryCollectionDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ enum: OverdueRange, example: OverdueRange.BUCKET_31_60 })
+  @ApiPropertyOptional({
+    enum: OverdueRange,
+    example: OverdueRange.BUCKET_31_60,
+  })
   @IsOptional()
   @IsEnum(OverdueRange)
   overdueRange?: OverdueRange;

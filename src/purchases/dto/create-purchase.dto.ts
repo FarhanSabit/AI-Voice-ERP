@@ -56,7 +56,7 @@ export class CreatePurchaseDto {
   @Min(0)
   tax?: number;
 
-  @ApiPropertyOptional({ example: "pending | partial | received | cancelled" })
+  @ApiPropertyOptional({ example: 'pending | partial | received | cancelled' })
   @IsOptional()
   @IsString()
   status?: string;

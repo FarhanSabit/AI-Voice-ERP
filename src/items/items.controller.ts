@@ -38,7 +38,7 @@ export class ItemsController {
   @ApiOperation({ summary: 'List items with optional filtering & pagination' })
   @ApiResponse({ status: 200, description: 'Items retrieved successfully' })
   findAll(@GetUser() user: JwtUser, @Query() query: QueryItemDto) {
-    return this.itemsService.findAll(user.businessId, user.branchId, query);
+    return this.itemsService.findAll(user, query);
   }
   //Get /items/categories
   @Get('categories')
@@ -54,7 +54,7 @@ export class ItemsController {
   @ApiOperation({ summary: 'Get summary statistics of inventory items' })
   @ApiResponse({ status: 200, description: 'Items status retrieved' })
   getStatus(@GetUser() user: JwtUser) {
-    return this.itemsService.getStatus(user.businessId, user.branchId);
+    return this.itemsService.getStatus(user);
   }
 
   // GET /items/:id  — includes last 10 stockHistory entries
@@ -63,7 +63,7 @@ export class ItemsController {
   @ApiResponse({ status: 200, description: 'Item retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Item not found' })
   findOne(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.itemsService.findOne(user.businessId, user.branchId, id);
+    return this.itemsService.findOne(user, id);
   }
 
   // POST /items
@@ -73,12 +73,7 @@ export class ItemsController {
   @ApiResponse({ status: 400, description: 'Validation error' })
   @ApiResponse({ status: 409, description: 'Duplicate SKU' })
   create(@GetUser() user: JwtUser, @Body() dto: CreateItemDto) {
-    return this.itemsService.create(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+    return this.itemsService.create(user, dto);
   }
 
   // PATCH /items/:id  — update item fields only (no stock here)
@@ -92,7 +87,7 @@ export class ItemsController {
     @Param('id') id: string,
     @Body() dto: UpdateItemDto,
   ) {
-    return this.itemsService.update(user.businessId, user.branchId, id, dto);
+    return this.itemsService.update(user, id, dto);
   }
 
   // PATCH /items/:id/stock-adjust
@@ -109,37 +104,25 @@ export class ItemsController {
     @Param('id') id: string,
     @Body() dto: StockAdjustmentDto,
   ) {
-    return this.itemsService.adjustStock(
-      user.businessId,
-      user.branchId,
-      id,
-      user.id,
-      dto,
-    );
+    return this.itemsService.adjustStock(user, id, dto);
   }
 
   @Post('import')
   @ApiOperation({ summary: 'Bulk import items' })
   @ApiResponse({ status: 201, description: 'Items imported successfully' })
   importItems(@GetUser() user: JwtUser, @Body() dto: ImportItemsDto) {
-    return this.itemsService.importItems(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+    return this.itemsService.importItems(user, dto);
   }
 
   @Post('transfer')
   @ApiOperation({ summary: 'Transfer stock between branches' })
   @ApiResponse({ status: 200, description: 'Stock transferred successfully' })
-  @ApiResponse({ status: 400, description: 'Insufficient stock or invalid branches' })
+  @ApiResponse({
+    status: 400,
+    description: 'Insufficient stock or invalid branches',
+  })
   transferStock(@GetUser() user: JwtUser, @Body() dto: StockTransferDto) {
-    return this.itemsService.transferStock(
-      user.businessId,
-      user.id,
-      dto,
-    );
+    return this.itemsService.transferStock(user, dto);
   }
 
   // DELETE /items/:id  — soft delete
@@ -148,7 +131,7 @@ export class ItemsController {
   @ApiResponse({ status: 200, description: 'Item deleted successfully' })
   @ApiResponse({ status: 404, description: 'Item not found' })
   remove(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.itemsService.remove(user.businessId, user.branchId, id);
+    return this.itemsService.remove(user, id);
   }
 
   // GET /items/:id/stock-ledger  — full history (last 100)
@@ -157,6 +140,6 @@ export class ItemsController {
   @ApiResponse({ status: 200, description: 'Stock ledger retrieved' })
   @ApiResponse({ status: 404, description: 'Item not found' })
   getStockLedger(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.itemsService.getStockLedger(user.businessId, user.branchId, id);
+    return this.itemsService.getStockLedger(user, id);
   }
 }

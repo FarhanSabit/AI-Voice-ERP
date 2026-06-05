@@ -13,6 +13,7 @@ import {
 } from './dto/create-sale-return.dto';
 import { UpdateSaleReturnDto } from './dto/update-sale-return.dto';
 import { QuerySaleReturnDto } from './dto/query-sale-return.dto';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 const listReturnInclude = {
   sale: { select: { invoiceNo: true } },
@@ -46,15 +47,26 @@ export class SaleReturnsService {
     private readonly logger: PinoLogger,
   ) {}
 
-  async findAll(
-    businessId: string,
-    branchId: string,
-    query: QuerySaleReturnDto,
-  ) {
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
+  async findAll(user: JwtUser, query: QuerySaleReturnDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const page = parseInt(query.page ?? '1', 10);
     const limit = parseInt(query.limit ?? '20', 10);
 
-    const where: Prisma.SaleReturnWhereInput = { businessId, branchId };
+    const where: Prisma.SaleReturnWhereInput = { businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
 
     if (query.saleId) where.saleId = query.saleId;
     if (query.partyId) where.partyId = query.partyId;
@@ -99,9 +111,17 @@ export class SaleReturnsService {
     };
   }
 
-  async findOne(businessId: string, branchId: string, id: string) {
+  async findOne(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.SaleReturnWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const saleReturn = await this.prisma.saleReturn.findFirst({
-      where: { id, businessId, branchId },
+      where,
       include: singleReturnInclude,
     });
 
@@ -110,16 +130,19 @@ export class SaleReturnsService {
     return { success: true, data: saleReturn };
   }
 
-  async create(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreateSaleReturnDto,
-  ) {
+  async create(user: JwtUser, dto: CreateSaleReturnDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const { saleId, items, reason, notes, refundMethod, accountId } = dto;
 
     const sale = await this.prisma.sale.findFirst({
-      where: { id: saleId, businessId, branchId },
+      where: {
+        id: saleId,
+        businessId,
+        ...(!isMainBranch && { branchId }),
+      },
       include: { items: true },
     });
 
@@ -134,7 +157,19 @@ export class SaleReturnsService {
     const saleItemMap = new Map<string, (typeof sale.items)[0]>(
       sale.items.map((i) => [i.id, i]),
     );
-    const returnItemsData: any[] = [];
+    interface ReturnItemData {
+      saleItemId: string;
+      itemId: string;
+      batchId: string | null;
+      itemName: string;
+      quantity: number;
+      unitPrice: number;
+      costPrice: number;
+      discount: number;
+      total: number;
+      reason?: string;
+    }
+    const returnItemsData: ReturnItemData[] = [];
     let refundSubtotal = 0;
 
     // Validate quantities
@@ -245,6 +280,7 @@ export class SaleReturnsService {
           await tx.stockLedger.create({
             data: {
               businessId,
+              branchId,
               itemId: item.itemId,
               batchId: item.batchId,
               type: 'return_in',
@@ -331,6 +367,7 @@ export class SaleReturnsService {
             await tx.partyLedger.create({
               data: {
                 businessId,
+                branchId,
                 partyId: party.id,
                 type: 'return',
                 referenceId: newReturn.id,
@@ -356,14 +393,17 @@ export class SaleReturnsService {
     return { success: true, data: saleReturn };
   }
 
-  async update(
-    businessId: string,
-    branchId: string,
-    id: string,
-    dto: UpdateSaleReturnDto,
-  ) {
+  async update(user: JwtUser, id: string, dto: UpdateSaleReturnDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.SaleReturnWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const saleReturn = await this.prisma.saleReturn.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
 
     if (!saleReturn) throw new NotFoundException(`Return ${id} not found.`);
@@ -379,9 +419,17 @@ export class SaleReturnsService {
     return { success: true, data: updated };
   }
 
-  async remove(businessId: string, branchId: string, id: string) {
+  async remove(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.SaleReturnWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.saleReturn.findFirst({
-      where: { id, businessId, branchId },
+      where,
       include: { items: true },
     });
 
@@ -426,6 +474,7 @@ export class SaleReturnsService {
           await tx.stockLedger.create({
             data: {
               businessId,
+              branchId: existing.branchId ?? branchId,
               itemId: item.itemId,
               type: 'adjustment',
               quantity: -item.quantity,

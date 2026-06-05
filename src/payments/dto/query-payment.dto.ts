@@ -47,4 +47,9 @@ export class QueryPaymentDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @ApiPropertyOptional({ example: 'clx1234branchid' })
+  @IsOptional()
+  @IsString()
+  branchId?: string;
 }

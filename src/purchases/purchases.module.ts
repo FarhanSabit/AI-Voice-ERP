@@ -9,4 +9,4 @@ import { PurchaseReturnsController } from './purchase-returns.controller';
   providers: [PurchasesService, PurchaseReturnsService],
   exports: [PurchasesService, PurchaseReturnsService],
 })
-export class PurchasesModule { }
+export class PurchasesModule {}

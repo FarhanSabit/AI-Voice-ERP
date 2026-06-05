@@ -71,12 +71,7 @@ import { ExpensesModule } from './expenses/expenses.module';
     AuthModule,
     MailModule,
   ],
-  controllers: [
-    AppController,
-  ],
-  providers: [
-    AppService,
-    PrismaService,
-  ],
+  controllers: [AppController],
+  providers: [AppService, PrismaService],
 })
 export class AppModule {}

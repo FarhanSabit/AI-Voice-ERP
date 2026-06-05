@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { QuerySaleDto } from '../dto/query-sale.dto';
 import { Prisma } from '@prisma/client';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 import {
   listSaleInclude,
   singleSaleInclude,
@@ -13,12 +14,14 @@ import {
 export class SalesQueryService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(businessId: string, branchId: string, query: QuerySaleDto) {
+  async findAll(user: JwtUser, query: QuerySaleDto) {
     const page = parseInt(query.page ?? '1', 10);
     const limit = parseInt(query.limit ?? '20', 10);
 
-    const where: Prisma.SaleWhereInput = { businessId };
-    if (branchId) where.branchId = branchId;
+    const where: Prisma.SaleWhereInput = { businessId: user.businessId };
+    if (!user.isMainBranch) {
+      where.branchId = user.branchId;
+    }
 
     if (query.partyId) where.partyId = query.partyId;
 
@@ -61,9 +64,17 @@ export class SalesQueryService {
     };
   }
 
-  async findOne(businessId: string, branchId: string, id: string) {
+  async findOne(user: JwtUser, id: string) {
+    const where: Prisma.SaleWhereInput = {
+      id,
+      businessId: user.businessId,
+    };
+    if (!user.isMainBranch) {
+      where.branchId = user.branchId;
+    }
+
     const sale = await this.prisma.sale.findFirst({
-      where: { id, businessId, ...(branchId && { branchId }) },
+      where,
       include: singleSaleInclude,
     });
 

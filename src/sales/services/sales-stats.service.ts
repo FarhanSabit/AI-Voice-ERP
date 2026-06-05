@@ -1,12 +1,25 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 @Injectable()
 export class SalesStatsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getSummary(businessId: string, branchId: string) {
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
+  async getSummary(user: JwtUser) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const now = new Date();
 
     // ── Time range boundaries ──────────────────────────────────────────────
@@ -27,12 +40,17 @@ export class SalesStatsService {
     const yesterdayEnd = todayStart;
 
     // ── Shared where clause builder ────────────────────────────────────────
-    const makeWhere = (from: Date, to: Date): Prisma.SaleWhereInput => ({
-      businessId,
-      ...(branchId && { branchId }),
-      status: { notIn: ['cancelled', 'returned'] },
-      createdAt: { gte: from, lt: to },
-    });
+    const makeWhere = (from: Date, to: Date): Prisma.SaleWhereInput => {
+      const where: Prisma.SaleWhereInput = {
+        businessId,
+        status: { notIn: ['cancelled', 'returned'] },
+        createdAt: { gte: from, lt: to },
+      };
+      if (!isMainBranch) {
+        where.branchId = branchId;
+      }
+      return where;
+    };
 
     // ── Run all aggregations in parallel ──────────────────────────────────
     const [
@@ -69,7 +87,7 @@ export class SalesStatsService {
       this.prisma.sale.aggregate({
         where: {
           businessId,
-          ...(branchId && { branchId }),
+          ...(!isMainBranch && { branchId }),
           status: { notIn: ['cancelled', 'returned'] },
         },
         _sum: { total: true, profit: true },
@@ -81,7 +99,7 @@ export class SalesStatsService {
       this.prisma.sale.count({
         where: {
           businessId,
-          ...(branchId && { branchId }),
+          ...(!isMainBranch && { branchId }),
           status: { notIn: ['cancelled', 'returned'] },
         },
       }),

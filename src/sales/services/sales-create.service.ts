@@ -2,6 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateSaleDto } from '../dto/create-sale.dto';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 import {
   listSaleInclude,
   transformListSale,
@@ -17,12 +18,21 @@ export class SalesCreateService {
     private readonly logger: PinoLogger,
   ) {}
 
-  async create(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreateSaleDto,
-  ) {
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
+  async create(user: JwtUser, dto: CreateSaleDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const {
       partyId,
       items,
@@ -37,13 +47,31 @@ export class SalesCreateService {
     const sale = await this.prisma.$transaction(async (tx) => {
       const invoiceNo = await generateInvoiceNo(tx, businessId);
 
-      const saleItemsData: any[] = [];
+      interface SaleItemData {
+        itemId: string;
+        batchId: string | null;
+        itemName: string;
+        quantity: number;
+        unitPrice: number;
+        costPrice: number;
+        discount: number;
+        total: number;
+        profit: number;
+      }
+      const saleItemsData: SaleItemData[] = [];
       let subtotal = 0;
       let totalProfit = 0;
 
       for (const input of items) {
-        const dbItem = await tx.item.findUnique({ where: { id: input.itemId } });
-        if (!dbItem) throw new BadRequestException(`Item not found: ${input.itemId}`);
+        const dbItem = await tx.item.findFirst({
+          where: {
+            id: input.itemId,
+            businessId,
+            ...(!isMainBranch && { branchId }),
+          },
+        });
+        if (!dbItem)
+          throw new BadRequestException(`Item not found: ${input.itemId}`);
 
         if (dbItem.currentStock < input.quantity) {
           throw new BadRequestException(
@@ -61,9 +89,9 @@ export class SalesCreateService {
               businessId,
               isActive: true,
               remainingQty: { gt: 0 },
-              ...(input.batchId ? { id: input.batchId } : {})
+              ...(input.batchId ? { id: input.batchId } : {}),
             },
-            orderBy: { expiryDate: 'asc' }
+            orderBy: { expiryDate: 'asc' },
           });
 
           for (const batch of batches) {
@@ -72,9 +100,13 @@ export class SalesCreateService {
             const allocateQty = Math.min(qtyToFulfill, batch.remainingQty);
             qtyToFulfill -= allocateQty;
 
-            const allocatedDiscount = (itemDiscount / input.quantity) * allocateQty;
-            const allocatedTotal = allocateQty * input.unitPrice - allocatedDiscount;
-            const allocatedProfit = (input.unitPrice - batch.costPrice) * allocateQty - allocatedDiscount;
+            const allocatedDiscount =
+              (itemDiscount / input.quantity) * allocateQty;
+            const allocatedTotal =
+              allocateQty * input.unitPrice - allocatedDiscount;
+            const allocatedProfit =
+              (input.unitPrice - batch.costPrice) * allocateQty -
+              allocatedDiscount;
 
             saleItemsData.push({
               itemId: dbItem.id,
@@ -90,16 +122,20 @@ export class SalesCreateService {
 
             await tx.batch.update({
               where: { id: batch.id },
-              data: { remainingQty: batch.remainingQty - allocateQty }
+              data: { remainingQty: batch.remainingQty - allocateQty },
             });
           }
 
           if (qtyToFulfill > 0) {
-            throw new BadRequestException(`Insufficient batch stock for "${dbItem.name}". Missing ${qtyToFulfill} units.`);
+            throw new BadRequestException(
+              `Insufficient batch stock for "${dbItem.name}". Missing ${qtyToFulfill} units.`,
+            );
           }
         } else {
           const itemTotal = input.quantity * input.unitPrice - itemDiscount;
-          const itemProfit = (input.unitPrice - dbItem.costPrice) * input.quantity - itemDiscount;
+          const itemProfit =
+            (input.unitPrice - dbItem.costPrice) * input.quantity -
+            itemDiscount;
 
           saleItemsData.push({
             itemId: dbItem.id,
@@ -123,7 +159,7 @@ export class SalesCreateService {
       const newSale = await tx.sale.create({
         data: {
           businessId,
-          branchId: branchId || null,
+          branchId,
           invoiceNo,
           partyId: partyId || null,
           subtotal,
@@ -156,7 +192,9 @@ export class SalesCreateService {
       });
 
       for (const itemData of saleItemsData) {
-        const currentItem = await tx.item.findUnique({ where: { id: itemData.itemId } });
+        const currentItem = await tx.item.findUnique({
+          where: { id: itemData.itemId },
+        });
         const prevStock = currentItem!.currentStock;
         const newStock = prevStock - itemData.quantity;
 
@@ -170,6 +208,7 @@ export class SalesCreateService {
             businessId,
             itemId: itemData.itemId,
             batchId: itemData.batchId,
+            branchId,
             type: 'sale',
             quantity: -itemData.quantity,
             previousStock: prevStock,
@@ -182,7 +221,13 @@ export class SalesCreateService {
       }
 
       if (partyId && dueAmount > 0) {
-        const party = await tx.party.findUnique({ where: { id: partyId } });
+        const party = await tx.party.findFirst({
+          where: {
+            id: partyId,
+            businessId,
+            ...(!isMainBranch && { branchId }),
+          },
+        });
         if (party) {
           const newBalance = party.currentBalance + dueAmount;
           await tx.party.update({
@@ -192,6 +237,7 @@ export class SalesCreateService {
           await tx.partyLedger.create({
             data: {
               businessId,
+              branchId,
               partyId,
               type: 'sale',
               referenceId: newSale.id,
@@ -206,7 +252,8 @@ export class SalesCreateService {
       }
 
       if (paidAmount > 0) {
-        const accountMeta = ACCOUNT_TYPE_MAP[paymentMethod] ?? ACCOUNT_TYPE_MAP['cash'];
+        const accountMeta =
+          ACCOUNT_TYPE_MAP[paymentMethod] ?? ACCOUNT_TYPE_MAP['cash'];
         let account = await tx.account.findFirst({
           where: { businessId, branchId, type: accountMeta.type },
         });
@@ -214,6 +261,7 @@ export class SalesCreateService {
           account = await tx.account.create({
             data: {
               businessId,
+              branchId,
               name: accountMeta.name,
               nameBn: accountMeta.nameBn,
               type: accountMeta.type,
@@ -232,7 +280,7 @@ export class SalesCreateService {
         await tx.payment.create({
           data: {
             businessId,
-            branchId: branchId || undefined,
+            branchId,
             partyId: partyId || undefined,
             type: 'sale',
             mode: paymentMethod,

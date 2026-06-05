@@ -48,7 +48,7 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // 9. Swagger 
+  // 9. Swagger
   const config = new DocumentBuilder()
     .setTitle('Hello Khata API Documentation')
     .setDescription('The Hello Khata API documentation')
@@ -70,6 +70,6 @@ async function bootstrap() {
 
   app.enableShutdownHooks();
   const port = process.env.PORT || 8000;
-  await app.listen(port, "0.0.0.0");
+  await app.listen(port, '0.0.0.0');
 }
 void bootstrap();

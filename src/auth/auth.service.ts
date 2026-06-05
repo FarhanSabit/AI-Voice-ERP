@@ -20,16 +20,22 @@ export class AuthService {
     private jwtService: JwtService,
     @InjectPinoLogger(AuthService.name)
     private readonly logger: PinoLogger,
-  ) { }
+  ) {}
 
   // ─── Private Helpers ──────────────────────────────────────────────────────
 
   private async findUserByPhone(phone: string) {
-    return this.prisma.user.findUnique({ where: { phone }, include: { role: true } });
+    return this.prisma.user.findUnique({
+      where: { phone },
+      include: { role: true },
+    });
   }
 
   private async findUserById(id: string) {
-    return this.prisma.user.findUnique({ where: { id }, include: { role: true } });
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: { role: true },
+    });
   }
 
   private buildTokenPayload(user: {
@@ -158,7 +164,8 @@ export class AuthService {
     // In production: send rawOtp via SMS, remove from response
     return {
       success: true,
-      message: 'Registration successful. Please verify your phone with the OTP.',
+      message:
+        'Registration successful. Please verify your phone with the OTP.',
       data: {
         userId: user.id,
         otp: rawOtp,
@@ -285,7 +292,6 @@ export class AuthService {
       business,
     };
   }
-
 
   // ─── RESEND OTP ────────────────────────────────────────────────────────────
   // POST /auth/resend-otp

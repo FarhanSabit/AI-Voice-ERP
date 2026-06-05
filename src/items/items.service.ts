@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
@@ -13,6 +14,7 @@ import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
 import { ImportItemsDto } from './dto/import-items.dto';
 import { StockTransferDto } from './dto/stock-transfer.dto';
 import { Prisma } from '@prisma/client';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,16 +42,32 @@ export class ItemsService {
     private readonly logger: PinoLogger,
   ) {}
 
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
   // ─── LIST ──────────────────────────────────────────────────────────────────
-  async findAll(businessId: string, branchId: string, query: QueryItemDto) {
+  async findAll(user: JwtUser, query: QueryItemDto) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
     const page = parseInt(query.page ?? '1', 10);
     const limit = parseInt(query.limit ?? '50', 10);
 
     const where: Prisma.ItemWhereInput = {
-      businessId,
-      branchId,
+      businessId: user.businessId,
       isActive: true,
     };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    } else if (query.branchId) {
+      where.branchId = query.branchId;
+    }
 
     if (query.categoryId) {
       where.categoryId = query.categoryId;
@@ -62,10 +80,6 @@ export class ItemsService {
         { sku: { contains: query.search, mode: 'insensitive' } },
         { barcode: { contains: query.search, mode: 'insensitive' } },
       ];
-    }
-
-    if (query.branchId) {
-      where.OR = [{ branchId: query.branchId }, { branchId: null }];
     }
 
     const [items, total] = await Promise.all([
@@ -103,9 +117,21 @@ export class ItemsService {
 
   // ─── GET ONE ───────────────────────────────────────────────────────────────
   // Matches Next.js GET /api/items/[id] — includes last 10 stock history entries
-  async findOne(businessId: string, branchId: string, id: string) {
+  async findOne(user: JwtUser, id: string) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.ItemWhereInput = {
+      id,
+      businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const item = await this.prisma.item.findFirst({
-      where: { id, businessId, branchId },
+      where,
       include: {
         category: { select: { id: true, name: true, nameBn: true } },
       },
@@ -132,12 +158,11 @@ export class ItemsService {
   }
 
   // ─── CREATE ────────────────────────────────────────────────────────────────
-  async create(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreateItemDto,
-  ) {
+  async create(user: JwtUser, dto: CreateItemDto) {
+    const { branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     if (dto.sku) {
       const existing = await this.prisma.item.findFirst({
         where: { businessId, branchId, sku: dto.sku },
@@ -204,12 +229,11 @@ export class ItemsService {
   }
 
   // ─── FILE IMPORT ───────────────────────────────────────────────────────────
-  async importItems(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: ImportItemsDto,
-  ) {
+  async importItems(user: JwtUser, dto: ImportItemsDto) {
+    const { branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const results = await this.prisma.$transaction(
       async (tx) => {
         const createdItems: any[] = [];
@@ -284,14 +308,21 @@ export class ItemsService {
 
   // ─── UPDATE ────────────────────────────────────────────────────────────────
   // Matches Next.js PATCH /api/items/[id] — also handles stockAdjustment
-  async update(
-    businessId: string,
-    branchId: string,
-    id: string,
-    dto: UpdateItemDto,
-  ) {
+  async update(user: JwtUser, id: string, dto: UpdateItemDto) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.ItemWhereInput = {
+      id,
+      businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.item.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
     if (!existing) {
       throw new NotFoundException(`Item ${id} not found.`);
@@ -300,7 +331,12 @@ export class ItemsService {
     // Guard: duplicate SKU if changing
     if (dto.sku && dto.sku !== existing.sku) {
       const skuTaken = await this.prisma.item.findFirst({
-        where: { businessId, branchId, sku: dto.sku, id: { not: id } },
+        where: {
+          businessId,
+          branchId: existing.branchId,
+          sku: dto.sku,
+          id: { not: id },
+        },
       });
       if (skuTaken) {
         throw new ConflictException(
@@ -351,15 +387,22 @@ export class ItemsService {
 
   // ─── STOCK ADJUSTMENT ─────────────────────────────────────────────────────
   // Matches Next.js PATCH stockAdjustment logic — separated into its own endpoint
-  async adjustStock(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-    dto: StockAdjustmentDto,
-  ) {
+  async adjustStock(user: JwtUser, id: string, dto: StockAdjustmentDto) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
+    const where: Prisma.ItemWhereInput = {
+      id,
+      businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const item = await this.prisma.item.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
     if (!item) {
       throw new NotFoundException(`Item ${id} not found.`);
@@ -386,6 +429,7 @@ export class ItemsService {
         data: {
           businessId,
           itemId: id,
+          branchId: item.branchId,
           type: dto.stockAdjustment > 0 ? 'purchase' : 'sale',
           quantity: Math.abs(dto.stockAdjustment),
           previousStock,
@@ -409,14 +453,20 @@ export class ItemsService {
   }
 
   // ─── STOCK TRANSFER ───────────────────────────────────────────────────────
-  async transferStock(
-    businessId: string,
-    userId: string | null,
-    dto: StockTransferDto,
-  ) {
+  async transferStock(user: JwtUser, dto: StockTransferDto) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     if (dto.fromBranchId === dto.toBranchId) {
       throw new BadRequestException(
         'Source and destination branches must be different.',
+      );
+    }
+
+    if (!isMainBranch && dto.fromBranchId !== branchId) {
+      throw new ForbiddenException(
+        'Sub-branch users can only transfer stock from their own branch.',
       );
     }
 
@@ -522,41 +572,69 @@ export class ItemsService {
   }
 
   // ─── SOFT DELETE ───────────────────────────────────────────────────────────
-  async remove(businessId: string, branchId: string, id: string) {
+  async remove(user: JwtUser, id: string) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.ItemWhereInput = {
+      id,
+      businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.item.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
     if (!existing) {
       throw new NotFoundException(`Item ${id} not found.`);
     }
 
     await this.prisma.item.update({
-      where: { id, businessId, branchId },
+      where: { id },
       data: { isActive: false },
     });
 
-    this.logger.info({ itemId: id, businessId, branchId }, 'Item soft-deleted');
+    this.logger.info(
+      { itemId: id, businessId, branchId: existing.branchId },
+      'Item soft-deleted',
+    );
 
     return { success: true, data: { id } };
   }
 
   // ─── STOCK LEDGER (full history) ───────────────────────────────────────────
-  async getStockLedger(businessId: string, branchId: string, itemId: string) {
+  async getStockLedger(user: JwtUser, itemId: string) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.ItemWhereInput = {
+      id: itemId,
+      businessId,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const item = await this.prisma.item.findFirst({
-      where: { id: itemId, businessId, branchId },
+      where,
     });
     if (!item) {
       throw new NotFoundException(`Item ${itemId} not found.`);
     }
 
     const ledger = await this.prisma.stockLedger.findMany({
-      where: { itemId, businessId, branchId },
+      where: { itemId, businessId, branchId: item.branchId },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
 
     return { success: true, data: ledger };
   }
+
   async getCategories(businessTypeId: string) {
     const categories = await this.prisma.category.findMany({
       where: { businessTypeId },
@@ -570,13 +648,21 @@ export class ItemsService {
   }
 
   // ─── STATUS ───────────────────────────────────────────────────────────────
-  async getStatus(businessId: string, branchId: string) {
+  async getStatus(user: JwtUser) {
+    const { isMainBranch, branchId } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.ItemWhereInput = {
+      businessId,
+      isActive: true,
+    };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const items = await this.prisma.item.findMany({
-      where: {
-        businessId,
-        branchId,
-        isActive: true,
-      },
+      where,
       select: {
         currentStock: true,
         minStock: true,

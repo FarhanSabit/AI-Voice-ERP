@@ -20,7 +20,8 @@ import {
   UpdatePromiseStatusDto,
 } from './dto/create-promise.dto';
 import { CreateFollowUpNoteDto } from './dto/create-followup.dto';
-import { QueryCollectionDto } from './dto/query-collection.dto';
+import { QueryCollectionDto, OverdueRange } from './dto/query-collection.dto';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -70,15 +71,23 @@ export class PaymentsService {
     private readonly logger: PinoLogger,
   ) {}
 
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // 10.1  PAYMENTS
   // ════════════════════════════════════════════════════════════════════════════
 
-  async findAllPayments(
-    businessId: string,
-    branchId: string,
-    query: QueryPaymentDto,
-  ) {
+  async findAllPayments(user: JwtUser, query: QueryPaymentDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const page = parseInt(query.page ?? '1', 10);
     const limit = parseInt(query.limit ?? '50', 10);
 
@@ -87,11 +96,17 @@ export class PaymentsService {
       deletedAt: null,
     };
 
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     if (query.type) where.type = query.type;
     if (query.mode) where.mode = query.mode;
     if (query.partyId) where.partyId = query.partyId;
     if (query.saleId) where.saleId = query.saleId;
     if (query.purchaseId) where.purchaseId = query.purchaseId;
+    if (query.branchId && isMainBranch) where.branchId = query.branchId;
+
     if (query.startDate || query.endDate) {
       where.createdAt = {};
       if (query.startDate) where.createdAt.gte = new Date(query.startDate);
@@ -130,9 +145,17 @@ export class PaymentsService {
     };
   }
 
-  async findOnePayment(businessId: string, id: string) {
+  async findOnePayment(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PaymentWhereInput = { id, businessId, deletedAt: null };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const payment = await this.prisma.payment.findFirst({
-      where: { id, businessId, deletedAt: null },
+      where,
       include: {
         ...paymentInclude,
       },
@@ -141,17 +164,58 @@ export class PaymentsService {
     return { success: true, data: payment };
   }
 
-  async createPayment(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreatePaymentDto,
-  ) {
-    // Validate party exists
+  async createPayment(user: JwtUser, dto: CreatePaymentDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
+    // Validate party exists and belongs to the active branch
     const party = await this.prisma.party.findFirst({
-      where: { id: dto.partyId, businessId, deletedAt: null },
+      where: {
+        id: dto.partyId,
+        businessId,
+        deletedAt: null,
+        ...(!isMainBranch && { branchId }),
+      },
     });
     if (!party) throw new BadRequestException('Party not found.');
+
+    // Validate account belongs to the active branch if accountId is passed
+    if (dto.accountId) {
+      const account = await this.prisma.account.findFirst({
+        where: {
+          id: dto.accountId,
+          businessId,
+          ...(!isMainBranch && { branchId }),
+        },
+      });
+      if (!account) throw new BadRequestException('Account not found.');
+    }
+
+    // Validate sale belongs to the active branch if saleId is passed
+    if (dto.saleId) {
+      const sale = await this.prisma.sale.findFirst({
+        where: {
+          id: dto.saleId,
+          businessId,
+          ...(!isMainBranch && { branchId }),
+        },
+      });
+      if (!sale) throw new BadRequestException('Sale transaction not found.');
+    }
+
+    // Validate purchase belongs to the active branch if purchaseId is passed
+    if (dto.purchaseId) {
+      const purchase = await this.prisma.purchase.findFirst({
+        where: {
+          id: dto.purchaseId,
+          businessId,
+          ...(!isMainBranch && { branchId }),
+        },
+      });
+      if (!purchase)
+        throw new BadRequestException('Purchase transaction not found.');
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Create payment record
@@ -301,9 +365,17 @@ export class PaymentsService {
     return { success: true, data: result };
   }
 
-  async deletePayment(businessId: string, id: string) {
+  async deletePayment(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PaymentWhereInput = { id, businessId, deletedAt: null };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const payment = await this.prisma.payment.findFirst({
-      where: { id, businessId, deletedAt: null },
+      where,
     });
     if (!payment) throw new NotFoundException(`Payment ${id} not found.`);
 
@@ -319,12 +391,8 @@ export class PaymentsService {
   // 10.2  SUPPLIER PAYMENTS (shorthand: type = paid)
   // ════════════════════════════════════════════════════════════════════════════
 
-  async findSupplierPayments(
-    businessId: string,
-    branchId: string,
-    query: QueryPaymentDto,
-  ) {
-    return this.findAllPayments(businessId, branchId, {
+  async findSupplierPayments(user: JwtUser, query: QueryPaymentDto) {
+    return this.findAllPayments(user, {
       ...query,
       type: PaymentType.PAID,
     });
@@ -334,10 +402,14 @@ export class PaymentsService {
   // 10.3  PAYMENT PLANS (Installments)
   // ════════════════════════════════════════════════════════════════════════════
 
-  async findAllPlans(businessId: string, partyId?: string) {
+  async findAllPlans(user: JwtUser, partyId?: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     const where: Prisma.PaymentPlanWhereInput = {
       businessId,
       deletedAt: null,
+      ...(!isMainBranch && { party: { branchId } }),
     };
     if (partyId) where.partyId = partyId;
 
@@ -349,23 +421,36 @@ export class PaymentsService {
     return { success: true, data: plans };
   }
 
-  async findOnePlan(businessId: string, id: string) {
+  async findOnePlan(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PaymentPlanWhereInput = {
+      id,
+      businessId,
+      deletedAt: null,
+      ...(!isMainBranch && { party: { branchId } }),
+    };
+
     const plan = await this.prisma.paymentPlan.findFirst({
-      where: { id, businessId, deletedAt: null },
+      where,
       include: planInclude,
     });
     if (!plan) throw new NotFoundException(`Payment plan ${id} not found.`);
     return { success: true, data: plan };
   }
 
-  async createPlan(
-    businessId: string,
-    branchId: string | null,
-    userId: string | null,
-    dto: CreatePaymentPlanDto,
-  ) {
+  async createPlan(user: JwtUser, dto: CreatePaymentPlanDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
     const party = await this.prisma.party.findFirst({
-      where: { id: dto.partyId, businessId, deletedAt: null },
+      where: {
+        id: dto.partyId,
+        businessId,
+        deletedAt: null,
+        ...(!isMainBranch && { branchId }),
+      },
     });
     if (!party) throw new BadRequestException('Party not found.');
 
@@ -423,15 +508,25 @@ export class PaymentsService {
   }
 
   async payInstallment(
-    businessId: string,
-    branchId: string,
+    user: JwtUser,
     planId: string,
     installmentId: string,
-    userId: string | null,
     dto: PayInstallmentDto,
   ) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const installment = await this.prisma.installment.findFirst({
-      where: { id: installmentId, paymentPlanId: planId, deletedAt: null },
+      where: {
+        id: installmentId,
+        paymentPlanId: planId,
+        deletedAt: null,
+        paymentPlan: {
+          businessId,
+          ...(!isMainBranch && { party: { branchId } }),
+        },
+      },
       include: { paymentPlan: true },
     });
     if (!installment) throw new NotFoundException('Installment not found.');
@@ -542,18 +637,16 @@ export class PaymentsService {
       }
     });
 
-    return this.findOnePlan(businessId, planId);
+    return this.findOnePlan(user, planId);
   }
 
   // ════════════════════════════════════════════════════════════════════════════
   // COLLECTION CENTER
   // ════════════════════════════════════════════════════════════════════════════
 
-  async getCollectionCenter(
-    businessId: string,
-    branchId: string,
-    query: QueryCollectionDto,
-  ) {
+  async getCollectionCenter(user: JwtUser, query: QueryCollectionDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const page = parseInt(query.page ?? '1', 10);
     const limit = parseInt(query.limit ?? '50', 10);
     const now = new Date();
@@ -564,6 +657,7 @@ export class PaymentsService {
       deletedAt: null,
       type: 'customer',
       currentBalance: { gt: 0 },
+      ...(!isMainBranch && { branchId }),
     };
 
     if (query.search) {
@@ -585,7 +679,11 @@ export class PaymentsService {
         lastPaymentDate: true,
         riskLevel: true,
         sales: {
-          where: { dueAmount: { gt: 0 }, deletedAt: null },
+          where: {
+            dueAmount: { gt: 0 },
+            deletedAt: null,
+            ...(!isMainBranch && { branchId }),
+          },
           select: {
             id: true,
             invoiceNo: true,
@@ -632,8 +730,8 @@ export class PaymentsService {
 
     // Filter by overdueRange if provided
     const filtered =
-      query.overdueRange && query.overdueRange !== 'all'
-        ? enriched.filter((p) => p.bucket === query.overdueRange)
+      query.overdueRange && query.overdueRange !== OverdueRange.ALL
+        ? enriched.filter((p) => p.bucket === (query.overdueRange as string))
         : enriched;
 
     // Filter by riskLevel
@@ -656,7 +754,9 @@ export class PaymentsService {
     };
   }
 
-  async getOverdueCustomers(businessId: string, branchId: string) {
+  async getOverdueCustomers(user: JwtUser) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const now = new Date();
 
     const customers = await this.prisma.party.findMany({
@@ -665,6 +765,7 @@ export class PaymentsService {
         deletedAt: null,
         type: 'customer',
         currentBalance: { gt: 0 },
+        ...(!isMainBranch && { branchId }),
       },
       select: {
         id: true,
@@ -721,13 +822,19 @@ export class PaymentsService {
   // REMINDERS
   // ════════════════════════════════════════════════════════════════════════════
 
-  async findReminders(businessId: string, partyId?: string) {
+  async findReminders(user: JwtUser, partyId?: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.CollectionReminderWhereInput = {
+      businessId,
+      deletedAt: null,
+      ...(!isMainBranch && { branchId }),
+    };
+    if (partyId) where.partyId = partyId;
+
     const reminders = await this.prisma.collectionReminder.findMany({
-      where: {
-        businessId,
-        ...(partyId && { partyId }),
-        deletedAt: null,
-      },
+      where,
       include: {
         party: { select: { id: true, name: true, phone: true } },
       },
@@ -736,14 +843,18 @@ export class PaymentsService {
     return { success: true, data: reminders };
   }
 
-  async createReminder(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreateReminderDto,
-  ) {
+  async createReminder(user: JwtUser, dto: CreateReminderDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const party = await this.prisma.party.findFirst({
-      where: { id: dto.partyId, businessId, deletedAt: null },
+      where: {
+        id: dto.partyId,
+        businessId,
+        deletedAt: null,
+        ...(!isMainBranch && { branchId }),
+      },
     });
     if (!party) throw new BadRequestException('Party not found.');
 
@@ -772,9 +883,19 @@ export class PaymentsService {
     return { success: true, data: reminder };
   }
 
-  async markReminderSent(businessId: string, id: string) {
+  async markReminderSent(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.CollectionReminderWhereInput = {
+      id,
+      businessId,
+      deletedAt: null,
+      ...(!isMainBranch && { branchId }),
+    };
+
     const reminder = await this.prisma.collectionReminder.findFirst({
-      where: { id, businessId, deletedAt: null },
+      where,
     });
     if (!reminder) throw new NotFoundException('Reminder not found.');
 
@@ -785,9 +906,19 @@ export class PaymentsService {
     return { success: true, data: updated };
   }
 
-  async deleteReminder(businessId: string, id: string) {
+  async deleteReminder(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.CollectionReminderWhereInput = {
+      id,
+      businessId,
+      deletedAt: null,
+      ...(!isMainBranch && { branchId }),
+    };
+
     const reminder = await this.prisma.collectionReminder.findFirst({
-      where: { id, businessId, deletedAt: null },
+      where,
     });
     if (!reminder) throw new NotFoundException('Reminder not found.');
 
@@ -802,13 +933,19 @@ export class PaymentsService {
   // PROMISE TO PAY
   // ════════════════════════════════════════════════════════════════════════════
 
-  async findPromises(businessId: string, partyId?: string) {
+  async findPromises(user: JwtUser, partyId?: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PromiseToPayWhereInput = {
+      businessId,
+      deletedAt: null,
+      ...(!isMainBranch && { branchId }),
+    };
+    if (partyId) where.partyId = partyId;
+
     const promises = await this.prisma.promiseToPay.findMany({
-      where: {
-        businessId,
-        ...(partyId && { partyId }),
-        deletedAt: null,
-      },
+      where,
       include: {
         party: { select: { id: true, name: true, phone: true } },
       },
@@ -817,16 +954,32 @@ export class PaymentsService {
     return { success: true, data: promises };
   }
 
-  async createPromise(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreatePromiseToPayDto,
-  ) {
+  async createPromise(user: JwtUser, dto: CreatePromiseToPayDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const party = await this.prisma.party.findFirst({
-      where: { id: dto.partyId, businessId, deletedAt: null },
+      where: {
+        id: dto.partyId,
+        businessId,
+        deletedAt: null,
+        ...(!isMainBranch && { branchId }),
+      },
     });
     if (!party) throw new BadRequestException('Party not found.');
+
+    // Validate sale belongs to active branch
+    if (dto.saleId) {
+      const sale = await this.prisma.sale.findFirst({
+        where: {
+          id: dto.saleId,
+          businessId,
+          ...(!isMainBranch && { branchId }),
+        },
+      });
+      if (!sale) throw new BadRequestException('Sale transaction not found.');
+    }
 
     const promise = await this.prisma.promiseToPay.create({
       data: {
@@ -849,12 +1002,22 @@ export class PaymentsService {
   }
 
   async updatePromiseStatus(
-    businessId: string,
+    user: JwtUser,
     id: string,
     dto: UpdatePromiseStatusDto,
   ) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PromiseToPayWhereInput = {
+      id,
+      businessId,
+      deletedAt: null,
+      ...(!isMainBranch && { branchId }),
+    };
+
     const promise = await this.prisma.promiseToPay.findFirst({
-      where: { id, businessId, deletedAt: null },
+      where,
     });
     if (!promise) throw new NotFoundException('Promise to pay not found.');
 
@@ -872,13 +1035,19 @@ export class PaymentsService {
   // FOLLOW-UP NOTES
   // ════════════════════════════════════════════════════════════════════════════
 
-  async findFollowUps(businessId: string, partyId?: string) {
+  async findFollowUps(user: JwtUser, partyId?: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.FollowUpNoteWhereInput = {
+      businessId,
+      deletedAt: null,
+      ...(!isMainBranch && { branchId }),
+    };
+    if (partyId) where.partyId = partyId;
+
     const notes = await this.prisma.followUpNote.findMany({
-      where: {
-        businessId,
-        ...(partyId && { partyId }),
-        deletedAt: null,
-      },
+      where,
       include: {
         party: { select: { id: true, name: true, phone: true } },
       },
@@ -887,16 +1056,32 @@ export class PaymentsService {
     return { success: true, data: notes };
   }
 
-  async createFollowUp(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreateFollowUpNoteDto,
-  ) {
+  async createFollowUp(user: JwtUser, dto: CreateFollowUpNoteDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
     const party = await this.prisma.party.findFirst({
-      where: { id: dto.partyId, businessId, deletedAt: null },
+      where: {
+        id: dto.partyId,
+        businessId,
+        deletedAt: null,
+        ...(!isMainBranch && { branchId }),
+      },
     });
     if (!party) throw new BadRequestException('Party not found.');
+
+    // Validate sale belongs to active branch
+    if (dto.saleId) {
+      const sale = await this.prisma.sale.findFirst({
+        where: {
+          id: dto.saleId,
+          businessId,
+          ...(!isMainBranch && { branchId }),
+        },
+      });
+      if (!sale) throw new BadRequestException('Sale transaction not found.');
+    }
 
     const note = await this.prisma.followUpNote.create({
       data: {
@@ -921,9 +1106,19 @@ export class PaymentsService {
   // PAYMENT ALLOCATIONS
   // ════════════════════════════════════════════════════════════════════════════
 
-  async getPaymentAllocations(businessId: string, paymentId: string) {
+  async getPaymentAllocations(user: JwtUser, paymentId: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.PaymentWhereInput = {
+      id: paymentId,
+      businessId,
+      deletedAt: null,
+      ...(!isMainBranch && { branchId }),
+    };
+
     const payment = await this.prisma.payment.findFirst({
-      where: { id: paymentId, businessId, deletedAt: null },
+      where,
     });
     if (!payment) throw new NotFoundException('Payment not found.');
 
@@ -937,7 +1132,9 @@ export class PaymentsService {
   // SUMMARY / STATS
   // ════════════════════════════════════════════════════════════════════════════
 
-  async getPaymentSummary(businessId: string, branchId: string) {
+  async getPaymentSummary(user: JwtUser) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const now = new Date();
     const todayStart = new Date(
       now.getFullYear(),
@@ -961,6 +1158,7 @@ export class PaymentsService {
           type: 'received',
           deletedAt: null,
           createdAt: { gte: todayStart },
+          ...(!isMainBranch && { branchId }),
         },
         _sum: { amount: true },
         _count: true,
@@ -971,6 +1169,7 @@ export class PaymentsService {
           type: 'paid',
           deletedAt: null,
           createdAt: { gte: todayStart },
+          ...(!isMainBranch && { branchId }),
         },
         _sum: { amount: true },
         _count: true,
@@ -981,6 +1180,7 @@ export class PaymentsService {
           type: 'received',
           deletedAt: null,
           createdAt: { gte: monthStart },
+          ...(!isMainBranch && { branchId }),
         },
         _sum: { amount: true },
       }),
@@ -990,6 +1190,7 @@ export class PaymentsService {
           type: 'paid',
           deletedAt: null,
           createdAt: { gte: monthStart },
+          ...(!isMainBranch && { branchId }),
         },
         _sum: { amount: true },
       }),
@@ -999,6 +1200,7 @@ export class PaymentsService {
           deletedAt: null,
           type: 'customer',
           currentBalance: { gt: 0 },
+          ...(!isMainBranch && { branchId }),
         },
         _sum: { currentBalance: true },
         _count: true,
@@ -1008,6 +1210,10 @@ export class PaymentsService {
           status: { in: ['pending', 'partial'] },
           dueDate: { lt: now },
           deletedAt: null,
+          paymentPlan: {
+            businessId,
+            ...(!isMainBranch && { party: { branchId } }),
+          },
         },
       }),
       this.prisma.paymentPlan.count({
@@ -1015,6 +1221,7 @@ export class PaymentsService {
           businessId,
           status: 'active',
           deletedAt: null,
+          ...(!isMainBranch && { party: { branchId } }),
         },
       }),
     ]);

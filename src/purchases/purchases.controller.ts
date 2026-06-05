@@ -34,7 +34,7 @@ export class PurchasesController {
   @ApiOperation({ summary: 'List purchases with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Purchases retrieved successfully' })
   findAll(@GetUser() user: JwtUser, @Query() query: QueryPurchaseDto) {
-    return this.purchasesService.findAll(user.businessId, user.branchId, query);
+    return this.purchasesService.findAll(user, query);
   }
 
   @Get(':id')
@@ -42,7 +42,7 @@ export class PurchasesController {
   @ApiResponse({ status: 200, description: 'Purchase retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Purchase not found' })
   findOne(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.purchasesService.findOne(user.businessId, user.branchId, id);
+    return this.purchasesService.findOne(user, id);
   }
 
   @Post()
@@ -50,7 +50,7 @@ export class PurchasesController {
   @ApiResponse({ status: 201, description: 'Purchase created successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })
   create(@GetUser() user: JwtUser, @Body() dto: CreatePurchaseDto) {
-    return this.purchasesService.create(user.businessId, user.branchId, user.id, dto);
+    return this.purchasesService.create(user, dto);
   }
 
   @Patch(':id')
@@ -62,7 +62,7 @@ export class PurchasesController {
     @Param('id') id: string,
     @Body() dto: UpdatePurchaseDto,
   ) {
-    return this.purchasesService.updateStatus(user.businessId, user.branchId, id, user.id, dto);
+    return this.purchasesService.updateStatus(user, id, dto);
   }
 
   @Delete(':id')
@@ -71,6 +71,6 @@ export class PurchasesController {
   @ApiResponse({ status: 403, description: 'Purchase is already cancelled' })
   @ApiResponse({ status: 404, description: 'Purchase not found' })
   remove(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.purchasesService.remove(user.businessId, user.branchId, id, user.id);
+    return this.purchasesService.remove(user, id);
   }
 }

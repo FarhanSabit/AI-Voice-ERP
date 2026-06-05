@@ -28,7 +28,10 @@ export class UpdateBusinessDto {
   @IsString()
   address?: string;
 
-  @ApiPropertyOptional({ example: 'growth', enum: ['free', 'starter', 'growth', 'intelligence'] })
+  @ApiPropertyOptional({
+    example: 'growth',
+    enum: ['free', 'starter', 'growth', 'intelligence'],
+  })
   @IsOptional()
   @IsString()
   plan?: string;

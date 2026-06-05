@@ -39,4 +39,9 @@ export class QueryQuotationDto {
   @IsOptional()
   @IsNumberString()
   limit?: string = '20';
+
+  @ApiPropertyOptional({ example: 'clx1234branchid' })
+  @IsOptional()
+  @IsString()
+  branchId?: string;
 }

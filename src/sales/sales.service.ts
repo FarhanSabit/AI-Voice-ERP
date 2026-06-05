@@ -3,6 +3,7 @@ import { CreateSaleDto } from './dto/create-sale.dto';
 import { EditSaleDto } from './dto/edit-sale.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
 import { QuerySaleDto } from './dto/query-sale.dto';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 import { SalesQueryService } from './services/sales-query.service';
 import { SalesCreateService } from './services/sales-create.service';
@@ -20,53 +21,31 @@ export class SalesService {
     private readonly statsService: SalesStatsService,
   ) {}
 
-  findAll(businessId: string, branchId: string, query: QuerySaleDto) {
-    return this.queryService.findAll(businessId, branchId, query);
+  findAll(user: JwtUser, query: QuerySaleDto) {
+    return this.queryService.findAll(user, query);
   }
 
-  findOne(businessId: string, branchId: string, id: string) {
-    return this.queryService.findOne(businessId, branchId, id);
+  findOne(user: JwtUser, id: string) {
+    return this.queryService.findOne(user, id);
   }
 
-  create(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreateSaleDto,
-  ) {
-    return this.createService.create(businessId, branchId, userId, dto);
+  create(user: JwtUser, dto: CreateSaleDto) {
+    return this.createService.create(user, dto);
   }
 
-  editSale(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-    dto: EditSaleDto,
-  ) {
-    return this.editService.editSale(businessId, branchId, id, userId, dto);
+  editSale(user: JwtUser, id: string, dto: EditSaleDto) {
+    return this.editService.editSale(user, id, dto);
   }
 
-  update(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-    dto: UpdateSaleDto,
-  ) {
-    return this.stateService.update(businessId, branchId, id, userId, dto);
+  update(user: JwtUser, id: string, dto: UpdateSaleDto) {
+    return this.stateService.update(user, id, dto);
   }
 
-  remove(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-  ) {
-    return this.stateService.remove(businessId, branchId, id, userId);
+  remove(user: JwtUser, id: string) {
+    return this.stateService.remove(user, id);
   }
 
-  getSummary(businessId: string, branchId: string) {
-    return this.statsService.getSummary(businessId, branchId);
+  getSummary(user: JwtUser) {
+    return this.statsService.getSummary(user);
   }
 }

@@ -13,13 +13,11 @@ import {
   BadRequestException,
   NotFoundException,
   StreamableFile,
-  Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { createReadStream, existsSync } from 'fs';
-import type { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -41,7 +39,7 @@ import type { JwtUser } from 'src/auth/types/jwt-user.type';
 @UseGuards(JwtAuthGuard)
 @Controller('expenses')
 export class ExpensesController {
-  constructor(private readonly expensesService: ExpensesService) { }
+  constructor(private readonly expensesService: ExpensesService) {}
 
   // ── Expense routes ──────────────────────────────────────────────────────────
 
@@ -54,7 +52,7 @@ export class ExpensesController {
   })
   @ApiResponse({ status: 200, description: 'Summary retrieved successfully' })
   getSummary(@GetUser() user: JwtUser) {
-    return this.expensesService.getSummary(user.businessId, user.branchId);
+    return this.expensesService.getSummary(user);
   }
 
   // GET /expenses
@@ -62,10 +60,10 @@ export class ExpensesController {
   @ApiOperation({ summary: 'List expenses with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Expenses retrieved successfully' })
   findAll(@GetUser() user: JwtUser, @Query() query: QueryExpenseDto) {
-    return this.expensesService.findAll(user.businessId, user.branchId, query);
+    return this.expensesService.findAll(user, query);
   }
 
-  // ── Category routes ─────────────────────────────────────────────────────────
+  // ─── Category routes ─────────────────────────────────────────────────────────
 
   // GET /expenses/categories
   @Get('categories')
@@ -78,8 +76,8 @@ export class ExpensesController {
     status: 200,
     description: 'Categories retrieved successfully',
   })
-  findAllCategories() {
-    return this.expensesService.findAllCategories();
+  findAllCategories(@GetUser() user: JwtUser) {
+    return this.expensesService.findAllCategories(user);
   }
 
   // GET /expenses/categories/:id
@@ -88,7 +86,7 @@ export class ExpensesController {
   @ApiResponse({ status: 200, description: 'Category retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Category not found' })
   findOneCategory(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.expensesService.findOneCategory(user.businessId, id);
+    return this.expensesService.findOneCategory(user, id);
   }
 
   // POST /expenses/categories
@@ -100,7 +98,7 @@ export class ExpensesController {
     @GetUser() user: JwtUser,
     @Body() dto: CreateExpenseCategoryDto,
   ) {
-    return this.expensesService.createCategory(user.businessId, dto);
+    return this.expensesService.createCategory(user, dto);
   }
 
   // PATCH /expenses/categories/:id
@@ -114,7 +112,7 @@ export class ExpensesController {
     @Param('id') id: string,
     @Body() dto: UpdateExpenseCategoryDto,
   ) {
-    return this.expensesService.updateCategory(user.businessId, id, dto);
+    return this.expensesService.updateCategory(user, id, dto);
   }
 
   // DELETE /expenses/categories/:id
@@ -130,9 +128,8 @@ export class ExpensesController {
   })
   @ApiResponse({ status: 404, description: 'Category not found' })
   removeCategory(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.expensesService.removeCategory(user.businessId, id);
+    return this.expensesService.removeCategory(user, id);
   }
-
 
   // GET /expenses/:id
   @Get(':id')
@@ -140,7 +137,7 @@ export class ExpensesController {
   @ApiResponse({ status: 200, description: 'Expense retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Expense not found' })
   findOne(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.expensesService.findOne(user.businessId, user.branchId, id);
+    return this.expensesService.findOne(user, id);
   }
 
   // POST /expenses
@@ -154,12 +151,7 @@ export class ExpensesController {
     description: 'Validation error or invalid category',
   })
   create(@GetUser() user: JwtUser, @Body() dto: CreateExpenseDto) {
-    return this.expensesService.create(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+    return this.expensesService.create(user, dto);
   }
 
   // PATCH /expenses/:id
@@ -175,7 +167,7 @@ export class ExpensesController {
     @Param('id') id: string,
     @Body() dto: UpdateExpenseDto,
   ) {
-    return this.expensesService.update(user.businessId, user.branchId, id, dto);
+    return this.expensesService.update(user, id, dto);
   }
 
   // DELETE /expenses/:id
@@ -184,7 +176,7 @@ export class ExpensesController {
   @ApiResponse({ status: 200, description: 'Expense deleted successfully' })
   @ApiResponse({ status: 404, description: 'Expense not found' })
   remove(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.expensesService.remove(user.businessId, user.branchId, id);
+    return this.expensesService.remove(user, id);
   }
 
   // ── File Upload routes ──────────────────────────────────────────────────────
@@ -197,7 +189,8 @@ export class ExpensesController {
       storage: diskStorage({
         destination: './uploads/expenses',
         filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = extname(file.originalname);
           cb(null, `${uniqueSuffix}${ext}`);
         },
@@ -209,7 +202,9 @@ export class ExpensesController {
   )
   uploadFile(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
-      throw new BadRequestException('File is required or exceeds 5MB size limit');
+      throw new BadRequestException(
+        'File is required or exceeds 5MB size limit',
+      );
     }
     return {
       url: `/api/expenses/file/${file.filename}`,
@@ -218,10 +213,7 @@ export class ExpensesController {
 
   @Get('file/:filename')
   @ApiOperation({ summary: 'Securely view an uploaded expense file' })
-  getFile(
-    @Param('filename') filename: string,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  getFile(@Param('filename') filename: string) {
     const filePath = join(process.cwd(), 'uploads', 'expenses', filename);
     if (!existsSync(filePath)) {
       throw new NotFoundException('File not found');
@@ -229,5 +221,4 @@ export class ExpensesController {
     const fileStream = createReadStream(filePath);
     return new StreamableFile(fileStream);
   }
-
 }

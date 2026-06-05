@@ -53,10 +53,7 @@ export class PaymentsController {
   })
   @ApiResponse({ status: 200, description: 'Summary retrieved' })
   getSummary(@GetUser() user: JwtUser) {
-    return this.paymentsService.getPaymentSummary(
-      user.businessId,
-      user.branchId,
-    );
+    return this.paymentsService.getPaymentSummary(user);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -71,11 +68,7 @@ export class PaymentsController {
   })
   @ApiResponse({ status: 200, description: 'Payments retrieved' })
   findAll(@GetUser() user: JwtUser, @Query() query: QueryPaymentDto) {
-    return this.paymentsService.findAllPayments(
-      user.businessId,
-      user.branchId,
-      query,
-    );
+    return this.paymentsService.findAllPayments(user, query);
   }
 
   @Get('allocations/:paymentId')
@@ -87,10 +80,7 @@ export class PaymentsController {
     @GetUser() user: JwtUser,
     @Param('paymentId') paymentId: string,
   ) {
-    return this.paymentsService.getPaymentAllocations(
-      user.businessId,
-      paymentId,
-    );
+    return this.paymentsService.getPaymentAllocations(user, paymentId);
   }
 
   @Get(':id')
@@ -99,7 +89,7 @@ export class PaymentsController {
   @ApiResponse({ status: 200, description: 'Payment retrieved' })
   @ApiResponse({ status: 404, description: 'Payment not found' })
   findOne(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.paymentsService.findOnePayment(user.businessId, id);
+    return this.paymentsService.findOnePayment(user, id);
   }
 
   @Post()
@@ -109,14 +99,12 @@ export class PaymentsController {
       'Records a payment received from customer or paid to supplier. Updates party balance, party ledger, account balance, and sale/purchase due amounts.',
   })
   @ApiResponse({ status: 201, description: 'Payment recorded' })
-  @ApiResponse({ status: 400, description: 'Validation error or party not found' })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation error or party not found',
+  })
   create(@GetUser() user: JwtUser, @Body() dto: CreatePaymentDto) {
-    return this.paymentsService.createPayment(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+    return this.paymentsService.createPayment(user, dto);
   }
 
   @Delete(':id')
@@ -125,7 +113,7 @@ export class PaymentsController {
   @ApiResponse({ status: 200, description: 'Payment deleted' })
   @ApiResponse({ status: 404, description: 'Payment not found' })
   remove(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.paymentsService.deletePayment(user.businessId, id);
+    return this.paymentsService.deletePayment(user, id);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -142,11 +130,7 @@ export class PaymentsController {
     @GetUser() user: JwtUser,
     @Query() query: QueryPaymentDto,
   ) {
-    return this.paymentsService.findSupplierPayments(
-      user.businessId,
-      user.branchId,
-      query,
-    );
+    return this.paymentsService.findSupplierPayments(user, query);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -156,15 +140,13 @@ export class PaymentsController {
   @Get('plans/list')
   @ApiOperation({
     summary: 'List payment plans',
-    description: 'List all active/completed installment plans. Filter by partyId.',
+    description:
+      'List all active/completed installment plans. Filter by partyId.',
   })
   @ApiQuery({ name: 'partyId', required: false })
   @ApiResponse({ status: 200, description: 'Plans retrieved' })
-  findAllPlans(
-    @GetUser() user: JwtUser,
-    @Query('partyId') partyId?: string,
-  ) {
-    return this.paymentsService.findAllPlans(user.businessId, partyId);
+  findAllPlans(@GetUser() user: JwtUser, @Query('partyId') partyId?: string) {
+    return this.paymentsService.findAllPlans(user, partyId);
   }
 
   @Get('plans/:id')
@@ -173,7 +155,7 @@ export class PaymentsController {
   @ApiResponse({ status: 200, description: 'Plan retrieved' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
   findOnePlan(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.paymentsService.findOnePlan(user.businessId, id);
+    return this.paymentsService.findOnePlan(user, id);
   }
 
   @Post('plans')
@@ -185,12 +167,7 @@ export class PaymentsController {
   @ApiResponse({ status: 201, description: 'Plan created' })
   @ApiResponse({ status: 400, description: 'Party not found' })
   createPlan(@GetUser() user: JwtUser, @Body() dto: CreatePaymentPlanDto) {
-    return this.paymentsService.createPlan(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+    return this.paymentsService.createPlan(user, dto);
   }
 
   @Post('plans/:planId/installments/:installmentId/pay')
@@ -211,11 +188,9 @@ export class PaymentsController {
     @Body() dto: PayInstallmentDto,
   ) {
     return this.paymentsService.payInstallment(
-      user.businessId,
-      user.branchId,
+      user,
       planId,
       installmentId,
-      user.id,
       dto,
     );
   }
@@ -235,11 +210,7 @@ export class PaymentsController {
     @GetUser() user: JwtUser,
     @Query() query: QueryCollectionDto,
   ) {
-    return this.paymentsService.getCollectionCenter(
-      user.businessId,
-      user.branchId,
-      query,
-    );
+    return this.paymentsService.getCollectionCenter(user, query);
   }
 
   @Get('collection/overdue')
@@ -250,10 +221,7 @@ export class PaymentsController {
   })
   @ApiResponse({ status: 200, description: 'Overdue customers retrieved' })
   getOverdueCustomers(@GetUser() user: JwtUser) {
-    return this.paymentsService.getOverdueCustomers(
-      user.businessId,
-      user.branchId,
-    );
+    return this.paymentsService.getOverdueCustomers(user);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -267,11 +235,8 @@ export class PaymentsController {
   })
   @ApiQuery({ name: 'partyId', required: false })
   @ApiResponse({ status: 200, description: 'Reminders retrieved' })
-  findReminders(
-    @GetUser() user: JwtUser,
-    @Query('partyId') partyId?: string,
-  ) {
-    return this.paymentsService.findReminders(user.businessId, partyId);
+  findReminders(@GetUser() user: JwtUser, @Query('partyId') partyId?: string) {
+    return this.paymentsService.findReminders(user, partyId);
   }
 
   @Post('collection/reminders')
@@ -282,16 +247,8 @@ export class PaymentsController {
   })
   @ApiResponse({ status: 201, description: 'Reminder scheduled' })
   @ApiResponse({ status: 400, description: 'Party not found' })
-  createReminder(
-    @GetUser() user: JwtUser,
-    @Body() dto: CreateReminderDto,
-  ) {
-    return this.paymentsService.createReminder(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+  createReminder(@GetUser() user: JwtUser, @Body() dto: CreateReminderDto) {
+    return this.paymentsService.createReminder(user, dto);
   }
 
   @Patch('collection/reminders/:id/sent')
@@ -300,7 +257,7 @@ export class PaymentsController {
   @ApiResponse({ status: 200, description: 'Reminder marked as sent' })
   @ApiResponse({ status: 404, description: 'Reminder not found' })
   markReminderSent(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.paymentsService.markReminderSent(user.businessId, id);
+    return this.paymentsService.markReminderSent(user, id);
   }
 
   @Delete('collection/reminders/:id')
@@ -309,7 +266,7 @@ export class PaymentsController {
   @ApiResponse({ status: 200, description: 'Reminder cancelled' })
   @ApiResponse({ status: 404, description: 'Reminder not found' })
   deleteReminder(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.paymentsService.deleteReminder(user.businessId, id);
+    return this.paymentsService.deleteReminder(user, id);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -323,11 +280,8 @@ export class PaymentsController {
   })
   @ApiQuery({ name: 'partyId', required: false })
   @ApiResponse({ status: 200, description: 'Promises retrieved' })
-  findPromises(
-    @GetUser() user: JwtUser,
-    @Query('partyId') partyId?: string,
-  ) {
-    return this.paymentsService.findPromises(user.businessId, partyId);
+  findPromises(@GetUser() user: JwtUser, @Query('partyId') partyId?: string) {
+    return this.paymentsService.findPromises(user, partyId);
   }
 
   @Post('collection/promises')
@@ -338,16 +292,8 @@ export class PaymentsController {
   })
   @ApiResponse({ status: 201, description: 'Promise recorded' })
   @ApiResponse({ status: 400, description: 'Party not found' })
-  createPromise(
-    @GetUser() user: JwtUser,
-    @Body() dto: CreatePromiseToPayDto,
-  ) {
-    return this.paymentsService.createPromise(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+  createPromise(@GetUser() user: JwtUser, @Body() dto: CreatePromiseToPayDto) {
+    return this.paymentsService.createPromise(user, dto);
   }
 
   @Patch('collection/promises/:id/status')
@@ -363,7 +309,7 @@ export class PaymentsController {
     @Param('id') id: string,
     @Body() dto: UpdatePromiseStatusDto,
   ) {
-    return this.paymentsService.updatePromiseStatus(user.businessId, id, dto);
+    return this.paymentsService.updatePromiseStatus(user, id, dto);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -373,15 +319,13 @@ export class PaymentsController {
   @Get('collection/followups')
   @ApiOperation({
     summary: 'List follow-up notes',
-    description: 'List all collection follow-up notes. Optionally filter by partyId.',
+    description:
+      'List all collection follow-up notes. Optionally filter by partyId.',
   })
   @ApiQuery({ name: 'partyId', required: false })
   @ApiResponse({ status: 200, description: 'Follow-up notes retrieved' })
-  findFollowUps(
-    @GetUser() user: JwtUser,
-    @Query('partyId') partyId?: string,
-  ) {
-    return this.paymentsService.findFollowUps(user.businessId, partyId);
+  findFollowUps(@GetUser() user: JwtUser, @Query('partyId') partyId?: string) {
+    return this.paymentsService.findFollowUps(user, partyId);
   }
 
   @Post('collection/followups')
@@ -392,15 +336,7 @@ export class PaymentsController {
   })
   @ApiResponse({ status: 201, description: 'Follow-up note added' })
   @ApiResponse({ status: 400, description: 'Party not found' })
-  createFollowUp(
-    @GetUser() user: JwtUser,
-    @Body() dto: CreateFollowUpNoteDto,
-  ) {
-    return this.paymentsService.createFollowUp(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+  createFollowUp(@GetUser() user: JwtUser, @Body() dto: CreateFollowUpNoteDto) {
+    return this.paymentsService.createFollowUp(user, dto);
   }
 }

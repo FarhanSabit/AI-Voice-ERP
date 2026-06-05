@@ -156,7 +156,9 @@ export class SettingsController {
 
   // DELETE /settings/roles/:id
   @Delete('roles/:id')
-  @ApiOperation({ summary: 'Delete a role (guard: no assigned users, not system)' })
+  @ApiOperation({
+    summary: 'Delete a role (guard: no assigned users, not system)',
+  })
   @ApiResponse({ status: 200, description: 'Role deleted' })
   @ApiResponse({ status: 400, description: 'Users still assigned to role' })
   @ApiResponse({ status: 403, description: 'Cannot delete system role' })
@@ -169,7 +171,9 @@ export class SettingsController {
 
   // GET /settings/permissions
   @Get('permissions')
-  @ApiOperation({ summary: 'Get static permission manifest (modules & actions)' })
+  @ApiOperation({
+    summary: 'Get static permission manifest (modules & actions)',
+  })
   @ApiResponse({ status: 200, description: 'Permission manifest returned' })
   getPermissions() {
     return this.settingsService.getPermissions();
@@ -209,7 +213,9 @@ export class SettingsController {
 
   // DELETE /settings/categories/:id
   @Delete('categories/:id')
-  @ApiOperation({ summary: 'Soft-delete a category (fails if items are assigned)' })
+  @ApiOperation({
+    summary: 'Soft-delete a category (fails if items are assigned)',
+  })
   @ApiResponse({ status: 200, description: 'Category deleted' })
   @ApiResponse({ status: 400, description: 'Items still use this category' })
   @ApiResponse({ status: 404, description: 'Category not found' })
@@ -253,10 +259,7 @@ export class SettingsController {
   @ApiOperation({ summary: 'Create a period lock' })
   @ApiResponse({ status: 201, description: 'Period lock created' })
   @ApiResponse({ status: 409, description: 'Overlapping lock exists' })
-  createPeriodLock(
-    @GetUser() user: JwtUser,
-    @Body() dto: CreatePeriodLockDto,
-  ) {
+  createPeriodLock(@GetUser() user: JwtUser, @Body() dto: CreatePeriodLockDto) {
     return this.settingsService.createPeriodLock(user.businessId, user.id, dto);
   }
 
@@ -308,7 +311,8 @@ export class SettingsController {
   @Get('export')
   @ApiOperation({
     summary: 'Export business data as JSON',
-    description: 'Supports: sales, purchases, items, expenses, parties. Optional date range.',
+    description:
+      'Supports: sales, purchases, items, expenses, parties. Optional date range.',
   })
   @ApiResponse({ status: 200, description: 'Data exported' })
   exportData(@GetUser() user: JwtUser, @Query() query: ExportQueryDto) {

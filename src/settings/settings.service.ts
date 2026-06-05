@@ -283,7 +283,10 @@ export class SettingsService {
       },
     });
 
-    this.logger.info({ businessId, branchId: branch.id, userId }, 'Branch created');
+    this.logger.info(
+      { businessId, branchId: branch.id, userId },
+      'Branch created',
+    );
     return { success: true, data: branch };
   }
 
@@ -491,7 +494,10 @@ export class SettingsService {
       },
     });
 
-    this.logger.info({ businessId, categoryId: category.id }, 'Category created');
+    this.logger.info(
+      { businessId, categoryId: category.id },
+      'Category created',
+    );
     return { success: true, data: category };
   }
 

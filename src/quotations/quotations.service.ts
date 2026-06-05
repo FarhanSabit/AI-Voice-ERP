@@ -15,6 +15,7 @@ import { UpdateQuotationDto } from './dto/update-quotation.dto';
 import { EditQuotationDto } from './dto/edit-quotation.dto';
 import { QueryQuotationDto } from './dto/query-quotation.dto';
 import { StoredQuotationItem } from './quotation.types';
+import type { JwtUser } from 'src/auth/types/jwt-user.type';
 
 // ─── Quotation number generator ───────────────────────────────────────────────
 // Format: QT-YYYYMMDD-0001  (daily sequence, same strategy as invoices)
@@ -76,16 +77,30 @@ export class QuotationsService {
     private readonly logger: PinoLogger,
   ) {}
 
+  private checkBranchAccess(user: JwtUser): {
+    isMainBranch: boolean;
+    branchId: string;
+  } {
+    if (!user.branchId) {
+      throw new BadRequestException('User is not associated with any branch.');
+    }
+    return { isMainBranch: user.isMainBranch, branchId: user.branchId };
+  }
+
   // ─── LIST ──────────────────────────────────────────────────────────────────
-  async findAll(
-    businessId: string,
-    branchId: string,
-    query: QueryQuotationDto,
-  ) {
+  async findAll(user: JwtUser, query: QueryQuotationDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const page = parseInt(query.page ?? '1', 10);
     const limit = parseInt(query.limit ?? '20', 10);
 
-    const where: Prisma.QuotationWhereInput = { businessId, branchId };
+    const where: Prisma.QuotationWhereInput = { businessId };
+
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    } else if (query.branchId) {
+      where.branchId = query.branchId;
+    }
 
     if (query.status && query.status !== 'all') where.status = query.status;
     if (query.partyId) where.partyId = query.partyId;
@@ -130,9 +145,17 @@ export class QuotationsService {
   }
 
   // ─── GET ONE ───────────────────────────────────────────────────────────────
-  async findOne(businessId: string, branchId: string, id: string) {
+  async findOne(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.QuotationWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const quotation = await this.prisma.quotation.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
 
     if (!quotation) throw new NotFoundException(`Quotation ${id} not found.`);
@@ -141,16 +164,18 @@ export class QuotationsService {
   }
 
   // ─── CREATE ────────────────────────────────────────────────────────────────
-  async create(
-    businessId: string,
-    branchId: string,
-    userId: string | null,
-    dto: CreateQuotationDto,
-  ) {
-    // Validate all items belong to this business and collect names
+  async create(user: JwtUser, dto: CreateQuotationDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    // Validate all items belong to this business and branch
     const itemIds = dto.items.map((i) => i.itemId);
     const dbItems = await this.prisma.item.findMany({
-      where: { id: { in: itemIds }, businessId, branchId },
+      where: {
+        id: { in: itemIds },
+        businessId,
+        ...(!isMainBranch && { branchId }),
+      },
       select: { id: true, name: true },
     });
 
@@ -158,6 +183,19 @@ export class QuotationsService {
       const foundIds = new Set(dbItems.map((i) => i.id));
       const missing = itemIds.filter((id) => !foundIds.has(id));
       throw new BadRequestException(`Items not found: ${missing.join(', ')}`);
+    }
+
+    // Validate party belongs to active branch
+    if (dto.partyId) {
+      const party = await this.prisma.party.findFirst({
+        where: {
+          id: dto.partyId,
+          businessId,
+          deletedAt: null,
+          ...(!isMainBranch && { branchId }),
+        },
+      });
+      if (!party) throw new BadRequestException('Party not found.');
     }
 
     const itemNameMap = new Map(dbItems.map((i) => [i.id, i.name]));
@@ -207,14 +245,17 @@ export class QuotationsService {
   // ─── EDIT (full content edit) ──────────────────────────────────────────────
   // PUT /quotations/:id — replaces items, recalculates totals.
   // Only DRAFT and SENT quotations can be edited.
-  async editQuotation(
-    businessId: string,
-    branchId: string,
-    id: string,
-    dto: EditQuotationDto,
-  ) {
+  async editQuotation(user: JwtUser, id: string, dto: EditQuotationDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.QuotationWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.quotation.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
 
     if (!existing) throw new NotFoundException(`Quotation ${id} not found.`);
@@ -230,13 +271,30 @@ export class QuotationsService {
       );
     }
 
+    // Validate party belongs to active branch
+    if (dto.partyId) {
+      const party = await this.prisma.party.findFirst({
+        where: {
+          id: dto.partyId,
+          businessId,
+          deletedAt: null,
+          ...(!isMainBranch && { branchId }),
+        },
+      });
+      if (!party) throw new BadRequestException('Party not found.');
+    }
+
     // If new items supplied, validate and rebuild
     let storedItems: StoredQuotationItem[] | null = null;
 
     if (dto.items && dto.items.length > 0) {
       const itemIds = dto.items.map((i) => i.itemId);
       const dbItems = await this.prisma.item.findMany({
-        where: { id: { in: itemIds }, businessId },
+        where: {
+          id: { in: itemIds },
+          businessId,
+          ...(!isMainBranch && { branchId }),
+        },
         select: { id: true, name: true },
       });
 
@@ -290,14 +348,17 @@ export class QuotationsService {
 
   // ─── UPDATE STATUS ─────────────────────────────────────────────────────────
   // PATCH /quotations/:id — status transitions and convertedToSaleId
-  async update(
-    businessId: string,
-    branchId: string,
-    id: string,
-    dto: UpdateQuotationDto,
-  ) {
+  async update(user: JwtUser, id: string, dto: UpdateQuotationDto) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.QuotationWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.quotation.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
 
     if (!existing) throw new NotFoundException(`Quotation ${id} not found.`);
@@ -336,14 +397,18 @@ export class QuotationsService {
   // POST /quotations/:id/convert
   // Creates a Sale from the quotation, marks quotation as converted.
   // Does NOT deduct stock — the sale service will handle that.
-  async convertToSale(
-    businessId: string,
-    branchId: string,
-    id: string,
-    userId: string | null,
-  ) {
+  async convertToSale(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+    const userId = user.id;
+
+    const where: Prisma.QuotationWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const quotation = await this.prisma.quotation.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
 
     if (!quotation) throw new NotFoundException(`Quotation ${id} not found.`);
@@ -370,7 +435,11 @@ export class QuotationsService {
     // Validate all items still exist and have enough stock
     const itemIds = parsedItems.map((i) => i.itemId);
     const dbItems = await this.prisma.item.findMany({
-      where: { id: { in: itemIds }, businessId },
+      where: {
+        id: { in: itemIds },
+        businessId,
+        ...(!isMainBranch && { branchId }),
+      },
     });
 
     if (dbItems.length !== itemIds.length) {
@@ -411,6 +480,7 @@ export class QuotationsService {
       const newSale = await tx.sale.create({
         data: {
           businessId,
+          branchId,
           invoiceNo,
           partyId: quotation.partyId ?? null,
           subtotal: quotation.subtotal,
@@ -457,6 +527,7 @@ export class QuotationsService {
         await tx.stockLedger.create({
           data: {
             businessId,
+            branchId,
             itemId: qi.itemId,
             type: 'sale',
             quantity: -qi.quantity,
@@ -484,6 +555,7 @@ export class QuotationsService {
           await tx.partyLedger.create({
             data: {
               businessId,
+              branchId,
               partyId: quotation.partyId,
               type: 'sale',
               referenceId: newSale.id,
@@ -527,9 +599,17 @@ export class QuotationsService {
 
   // ─── DELETE ────────────────────────────────────────────────────────────────
   // Only DRAFT quotations can be hard-deleted.
-  async remove(businessId: string, branchId: string, id: string) {
+  async remove(user: JwtUser, id: string) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
+
+    const where: Prisma.QuotationWhereInput = { id, businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
     const existing = await this.prisma.quotation.findFirst({
-      where: { id, businessId, branchId },
+      where,
     });
 
     if (!existing) throw new NotFoundException(`Quotation ${id} not found.`);
@@ -551,10 +631,22 @@ export class QuotationsService {
   }
 
   // ─── SUMMARY ───────────────────────────────────────────────────────────────
-  async getSummary(businessId: string, branchId: string) {
+  async getSummary(user: JwtUser) {
+    const { branchId, isMainBranch } = this.checkBranchAccess(user);
+    const businessId = user.businessId;
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const where: Prisma.QuotationWhereInput = { businessId };
+    if (!isMainBranch) {
+      where.branchId = branchId;
+    }
+
+    const monthWhere: Prisma.QuotationWhereInput = {
+      ...where,
+      createdAt: { gte: monthStart, lt: monthEnd },
+    };
 
     const [
       totalCount,
@@ -564,33 +656,29 @@ export class QuotationsService {
       allTimeAgg,
       conversionCount,
     ] = await Promise.all([
-      this.prisma.quotation.count({ where: { businessId } }),
+      this.prisma.quotation.count({ where }),
       this.prisma.quotation.count({
-        where: {
-          businessId,
-          branchId,
-          createdAt: { gte: monthStart, lt: monthEnd },
-        },
+        where: monthWhere,
       }),
       // Count per status
       this.prisma.quotation.groupBy({
         by: ['status'],
-        where: { businessId },
+        where,
         _count: { _all: true },
       }),
       this.prisma.quotation.aggregate({
-        where: { businessId, createdAt: { gte: monthStart, lt: monthEnd } },
+        where: monthWhere,
         _sum: { total: true },
         _avg: { total: true },
       }),
       this.prisma.quotation.aggregate({
-        where: { businessId },
+        where,
         _sum: { total: true },
         _avg: { total: true },
       }),
       // Converted = accepted into a sale
       this.prisma.quotation.count({
-        where: { businessId, status: QuotationStatus.CONVERTED },
+        where: { ...where, status: QuotationStatus.CONVERTED },
       }),
     ]);
 

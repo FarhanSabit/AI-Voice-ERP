@@ -43,7 +43,7 @@ export class QuotationsController {
   })
   @ApiResponse({ status: 200, description: 'Summary retrieved successfully' })
   getSummary(@GetUser() user: JwtUser) {
-    return this.quotationsService.getSummary(user.businessId, user.branchId);
+    return this.quotationsService.getSummary(user);
   }
 
   // GET /quotations
@@ -54,11 +54,7 @@ export class QuotationsController {
     description: 'Quotations retrieved successfully',
   })
   findAll(@GetUser() user: JwtUser, @Query() query: QueryQuotationDto) {
-    return this.quotationsService.findAll(
-      user.businessId,
-      user.branchId,
-      query,
-    );
+    return this.quotationsService.findAll(user, query);
   }
 
   // GET /quotations/:id
@@ -67,7 +63,7 @@ export class QuotationsController {
   @ApiResponse({ status: 200, description: 'Quotation retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Quotation not found' })
   findOne(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.quotationsService.findOne(user.businessId, user.branchId, id);
+    return this.quotationsService.findOne(user, id);
   }
 
   // POST /quotations
@@ -79,12 +75,7 @@ export class QuotationsController {
     description: 'Validation error or item not found',
   })
   create(@GetUser() user: JwtUser, @Body() dto: CreateQuotationDto) {
-    return this.quotationsService.create(
-      user.businessId,
-      user.branchId,
-      user.id,
-      dto,
-    );
+    return this.quotationsService.create(user, dto);
   }
 
   // PUT /quotations/:id  — full content edit (items, amounts, dates)
@@ -110,12 +101,7 @@ export class QuotationsController {
     @Param('id') id: string,
     @Body() dto: EditQuotationDto,
   ) {
-    return this.quotationsService.editQuotation(
-      user.businessId,
-      user.branchId,
-      id,
-      dto,
-    );
+    return this.quotationsService.editQuotation(user, id, dto);
   }
 
   // PATCH /quotations/:id  — status update only
@@ -137,12 +123,7 @@ export class QuotationsController {
     @Param('id') id: string,
     @Body() dto: UpdateQuotationDto,
   ) {
-    return this.quotationsService.update(
-      user.businessId,
-      user.branchId,
-      id,
-      dto,
-    );
+    return this.quotationsService.update(user, id, dto);
   }
 
   // POST /quotations/:id/convert  — convert quotation → sale
@@ -168,12 +149,7 @@ export class QuotationsController {
   })
   @ApiResponse({ status: 404, description: 'Quotation not found' })
   convertToSale(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.quotationsService.convertToSale(
-      user.businessId,
-      user.branchId,
-      id,
-      user.id,
-    );
+    return this.quotationsService.convertToSale(user, id);
   }
 
   // DELETE /quotations/:id  — only draft quotations
@@ -190,6 +166,6 @@ export class QuotationsController {
   })
   @ApiResponse({ status: 404, description: 'Quotation not found' })
   remove(@GetUser() user: JwtUser, @Param('id') id: string) {
-    return this.quotationsService.remove(user.businessId, user.branchId, id);
+    return this.quotationsService.remove(user, id);
   }
 }

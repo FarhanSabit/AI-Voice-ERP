@@ -40,8 +40,12 @@ export const singleSaleInclude = {
   },
 } satisfies Prisma.SaleInclude;
 
-export type ListSale = Prisma.SaleGetPayload<{ include: typeof listSaleInclude }>;
-export type SingleSale = Prisma.SaleGetPayload<{ include: typeof singleSaleInclude }>;
+export type ListSale = Prisma.SaleGetPayload<{
+  include: typeof listSaleInclude;
+}>;
+export type SingleSale = Prisma.SaleGetPayload<{
+  include: typeof singleSaleInclude;
+}>;
 
 export function transformListSale(sale: ListSale) {
   return {
